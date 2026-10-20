@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Upload,
   FileCheck,
@@ -10,12 +10,16 @@ import {
   RefreshCw,
   Info,
   HardDrive,
+  ShieldCheck,
+  Activity,
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import { useDataset } from '../../context/DatasetContext';
 import type {
+  CorporateActionEvent,
   DatasetMetadataResponse,
   DatasetQueryResponse,
+  QualityAuditReport,
   ValidationReportResponse,
 } from '../../types/api';
 
@@ -45,6 +49,49 @@ export const MarketDataPage: React.FC = () => {
   const [isQuerying, setIsQuerying] = useState<boolean>(false);
   const [queryResult, setQueryResult] = useState<DatasetQueryResponse | null>(null);
   const [queryError, setQueryError] = useState<string | null>(null);
+
+  // Quality Audit & Corporate Actions state
+  const [isAuditing, setIsAuditing] = useState<boolean>(false);
+  const [qualityReport, setQualityReport] = useState<QualityAuditReport | null>(null);
+  const [auditError, setAuditError] = useState<string | null>(null);
+
+  const [corporateActions, setCorporateActions] = useState<CorporateActionEvent[]>([]);
+  const [isLoadingCAs, setIsLoadingCAs] = useState<boolean>(false);
+  const [caError, setCaError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (currentDataset) {
+      handleFetchCorporateActions(currentDataset.dataset_id);
+      setQualityReport(null);
+    }
+  }, [currentDataset?.dataset_id]);
+
+  const handleRunAudit = async () => {
+    if (!currentDataset) return;
+    setIsAuditing(true);
+    setAuditError(null);
+    try {
+      const rep = await apiClient.auditDatasetQuality(currentDataset.dataset_id);
+      setQualityReport(rep);
+    } catch (err: any) {
+      setAuditError(err.message || 'Quality audit failed.');
+    } finally {
+      setIsAuditing(false);
+    }
+  };
+
+  const handleFetchCorporateActions = async (dsId: string) => {
+    setIsLoadingCAs(true);
+    setCaError(null);
+    try {
+      const cas = await apiClient.queryCorporateActions({ dataset_id: dsId });
+      setCorporateActions(cas);
+    } catch (err: any) {
+      setCaError(err.message || 'Failed to fetch corporate actions.');
+    } finally {
+      setIsLoadingCAs(false);
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -390,6 +437,19 @@ export const MarketDataPage: React.FC = () => {
             <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
               <strong>Stored Price Bars:</strong> <span className="font-mono" style={{ color: 'var(--success)' }}>{currentDataset.valid_rows.toLocaleString()}</span>
             </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+              <strong>PIT Integrity:</strong>{' '}
+              <span className={`badge ${currentDataset.point_in_time_status === 'verified_pass' ? 'badge-success' : 'badge-neutral'}`} style={{ marginLeft: '4px' }}>
+                <ShieldCheck size={12} style={{ display: 'inline', marginRight: '4px' }} />
+                {currentDataset.point_in_time_status || 'unverified_legacy'}
+              </span>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+              <strong>Exchange Calendar:</strong> <span className="font-mono">{currentDataset.calendar_version || 'US-NYSE / PSX-KHI (2026.1)'}</span>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+              <strong>Adjustment Policy:</strong> <span className="font-mono">{currentDataset.adjustment_policy_version || 'CRSP 2026.1'}</span>
+            </div>
           </div>
 
           <h4 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px' }}>
@@ -439,6 +499,156 @@ export const MarketDataPage: React.FC = () => {
               No assets discovered for this dataset.
             </div>
           )}
+
+          {/* Market Data Quality & Corporate Actions Controls */}
+          <div style={{ marginTop: '20px', borderTop: '1px solid var(--border-medium)', paddingTop: '20px', marginBottom: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+              <div>
+                <h4 style={{ fontSize: '14px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', margin: 0 }}>
+                  <ShieldCheck size={16} style={{ color: 'var(--accent)' }} />
+                  Point-in-Time Quality Controls & Corporate Actions
+                </h4>
+                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '2px 0 0' }}>
+                  Audits OHLC geometry, missing calendar sessions, unadjusted price jumps, and registered corporate actions.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  onClick={handleRunAudit}
+                  disabled={isAuditing}
+                  className="btn btn-secondary"
+                  style={{ fontSize: '12px', padding: '6px 12px' }}
+                >
+                  <Activity size={14} className={isAuditing ? 'spin' : ''} />
+                  <span>{isAuditing ? 'Auditing...' : 'Run Quality Audit'}</span>
+                </button>
+              </div>
+            </div>
+
+            {auditError && (
+              <div className="alert alert-danger" style={{ marginBottom: '12px' }}>
+                <XCircle size={16} style={{ flexShrink: 0 }} />
+                <div>{auditError}</div>
+              </div>
+            )}
+
+            {qualityReport && (
+              <div style={{ padding: '12px', backgroundColor: 'var(--bg-elevated)', borderRadius: '6px', marginBottom: '16px', border: '1px solid var(--border-subtle)' }}>
+                <div style={{ display: 'flex', gap: '16px', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap' }}>
+                  <span className={`badge ${qualityReport.is_valid ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '12px', padding: '4px 8px' }}>
+                    {qualityReport.is_valid ? '✓ Quality Audit Passed' : '⚠ Quality Issues Detected'}
+                  </span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Errors: <strong style={{ color: qualityReport.error_count > 0 ? 'var(--danger)' : 'var(--text-primary)' }}>{qualityReport.error_count}</strong>
+                  </span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    Warnings: <strong style={{ color: qualityReport.warning_count > 0 ? 'var(--warning)' : 'var(--text-primary)' }}>{qualityReport.warning_count}</strong>
+                  </span>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                    Policy: {qualityReport.policy_version}
+                  </span>
+                </div>
+
+                {qualityReport.findings.length > 0 ? (
+                  <div className="table-container" style={{ maxHeight: '180px' }}>
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th>Severity</th>
+                          <th>Rule</th>
+                          <th>Security</th>
+                          <th>Date</th>
+                          <th>Finding Description</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {qualityReport.findings.slice(0, 50).map((f, idx) => (
+                          <tr key={idx}>
+                            <td>
+                              <span className={`badge ${f.severity === 'error' ? 'badge-danger' : f.severity === 'warning' ? 'badge-warning' : 'badge-neutral'}`}>
+                                {f.severity.toUpperCase()}
+                              </span>
+                            </td>
+                            <td className="font-mono" style={{ fontSize: '11px' }}>{f.rule_id}</td>
+                            <td>{f.ticker}:{f.market}</td>
+                            <td className="font-mono">{f.date || '—'}</td>
+                            <td style={{ fontSize: '12px' }}>{f.message}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '12px', color: 'var(--success)' }}>
+                    ✓ No anomalies, missing sessions, or geometry inversions detected.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Corporate Actions Ledger Sub-Table */}
+            {caError && (
+              <div className="alert alert-danger" style={{ marginTop: '10px', marginBottom: '10px' }}>
+                <XCircle size={14} style={{ flexShrink: 0 }} />
+                <div>{caError}</div>
+              </div>
+            )}
+
+            {isLoadingCAs ? (
+              <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+                <RefreshCw size={14} className="spin" style={{ display: 'inline', marginRight: '6px' }} />
+                Loading registered corporate actions...
+              </div>
+            ) : corporateActions.length > 0 ? (
+              <div style={{ marginTop: '14px' }}>
+                <h5 style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)', textTransform: 'uppercase', marginBottom: '8px' }}>
+                  Registered Corporate Actions ({corporateActions.length})
+                </h5>
+                <div className="table-container" style={{ maxHeight: '160px' }}>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Event ID</th>
+                        <th>Security</th>
+                        <th>Type</th>
+                        <th>Effective Date</th>
+                        <th>Announcement</th>
+                        <th className="num-cell">Value</th>
+                        <th>Status</th>
+                        <th>PIT Verified</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {corporateActions.map((ca) => (
+                        <tr key={ca.id}>
+                          <td className="font-mono" style={{ fontSize: '11px' }}>{ca.id}</td>
+                          <td>{ca.ticker}:{ca.market}</td>
+                          <td>
+                            <span className="badge badge-neutral">{ca.event_type}</span>
+                          </td>
+                          <td className="font-mono">{ca.effective_date}</td>
+                          <td className="font-mono">{ca.announcement_date || '—'}</td>
+                          <td className="num-cell font-mono">{ca.value} {ca.currency}</td>
+                          <td>
+                            <span className={`badge ${ca.status === 'active' ? 'badge-success' : 'badge-neutral'}`}>
+                              {ca.status}
+                            </span>
+                          </td>
+                          <td>
+                            {ca.is_point_in_time_verified ? (
+                              <span style={{ color: 'var(--success)', fontSize: '12px' }}>✓ Verified</span>
+                            ) : (
+                              <span style={{ color: 'var(--text-muted)', fontSize: '12px' }}>Unverified</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
+          </div>
 
           {/* Historical Data Query Tool */}
           <div style={{ marginTop: '20px', borderTop: '1px solid var(--border-medium)', paddingTop: '20px' }}>

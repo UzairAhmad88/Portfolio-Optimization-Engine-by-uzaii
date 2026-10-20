@@ -15,6 +15,7 @@ import type {
   CopulaFitResponse,
   CopulaSimulateRequest,
   CopulaSimulateResponse,
+  CorporateActionEvent,
   TailRiskParityRequest,
   TailRiskParityResponse,
   VineCopulaFitRequest,
@@ -29,6 +30,8 @@ import type {
   DatasetMetadataResponse,
   DatasetQuery,
   DatasetQueryResponse,
+  ExchangeCalendarSessionInfo,
+  QualityAuditReport,
   DynamicFactorBacktestRequest,
   DynamicFactorBacktestResponse,
   EfficientFrontierRequest,
@@ -235,6 +238,53 @@ export const apiClient = {
       body: JSON.stringify(query),
     });
     return handleResponse<DatasetQueryResponse>(res);
+  },
+
+  async addCorporateActions(actions: Partial<CorporateActionEvent>[]): Promise<CorporateActionEvent[]> {
+    const res = await secureFetch(`${BASE_URL}/market-data/corporate-actions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(actions),
+    });
+    return handleResponse<CorporateActionEvent[]>(res);
+  },
+
+  async queryCorporateActions(params?: {
+    asset_id?: string;
+    dataset_id?: string;
+    as_of_date?: string;
+    strict_pit?: boolean;
+  }): Promise<CorporateActionEvent[]> {
+    const query = new URLSearchParams();
+    if (params?.asset_id) query.append('asset_id', params.asset_id);
+    if (params?.dataset_id) query.append('dataset_id', params.dataset_id);
+    if (params?.as_of_date) query.append('as_of_date', params.as_of_date);
+    if (params?.strict_pit !== undefined) query.append('strict_pit', String(params.strict_pit));
+    const url = `${BASE_URL}/market-data/corporate-actions${query.toString() ? `?${query.toString()}` : ''}`;
+    const res = await secureFetch(url);
+    return handleResponse<CorporateActionEvent[]>(res);
+  },
+
+  async auditDatasetQuality(
+    datasetId: string,
+    params?: { discontinuity_threshold?: number; stale_limit_days?: number }
+  ): Promise<QualityAuditReport> {
+    const query = new URLSearchParams();
+    if (params?.discontinuity_threshold) query.append('discontinuity_threshold', String(params.discontinuity_threshold));
+    if (params?.stale_limit_days) query.append('stale_limit_days', String(params.stale_limit_days));
+    const url = `${BASE_URL}/market-data/datasets/${encodeURIComponent(datasetId)}/quality-audit${query.toString() ? `?${query.toString()}` : ''}`;
+    const res = await secureFetch(url, { method: 'POST' });
+    return handleResponse<QualityAuditReport>(res);
+  },
+
+  async getCalendarSessions(
+    market: string,
+    startDate: string,
+    endDate: string
+  ): Promise<ExchangeCalendarSessionInfo> {
+    const query = new URLSearchParams({ start_date: startDate, end_date: endDate });
+    const res = await secureFetch(`${BASE_URL}/market-data/calendars/${encodeURIComponent(market)}/sessions?${query.toString()}`);
+    return handleResponse<ExchangeCalendarSessionInfo>(res);
   },
 
   // --- Portfolio & Quantitative Analytics APIs ---

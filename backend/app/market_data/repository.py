@@ -12,7 +12,7 @@ import pandas as pd
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.db.models import AssetModel, DatasetModel, PriceBarModel
+from app.db.models import AssetModel, CorporateActionModel, DatasetModel, PriceBarModel
 
 
 def find_dataset_by_sha256(
@@ -284,11 +284,81 @@ def get_dataset_price_matrix_dataframe(
     return clean_df, currency
 
 
+def save_corporate_actions(
+    session: Session,
+    actions: list[dict[str, Any]],
+    dataset_id: str | None = None,
+) -> list[CorporateActionModel]:
+    """
+    Persists corporate actions idempotently. Deduplicates matching actions.
+    """
+    models = []
+    for a in actions:
+        ev_id = a.get("event_id") or a.get("id")
+        existing = session.get(CorporateActionModel, ev_id) if ev_id else None
+        if existing:
+            continue
+        m = CorporateActionModel(
+            id=ev_id,
+            dataset_id=dataset_id,
+            asset_id=a["asset_id"],
+            ticker=a["ticker"],
+            market=a["market"],
+            event_type=a["event_type"],
+            effective_date=a["effective_date"] if isinstance(a["effective_date"], date) else date.fromisoformat(str(a["effective_date"])),
+            announcement_date=a.get("announcement_date") if isinstance(a.get("announcement_date"), (date, type(None))) else date.fromisoformat(str(a["announcement_date"])),
+            ex_date=a.get("ex_date") if isinstance(a.get("ex_date"), (date, type(None))) else date.fromisoformat(str(a["ex_date"])),
+            record_date=a.get("record_date") if isinstance(a.get("record_date"), (date, type(None))) else date.fromisoformat(str(a["record_date"])),
+            payment_date=a.get("payment_date") if isinstance(a.get("payment_date"), (date, type(None))) else date.fromisoformat(str(a["payment_date"])),
+            value=float(a["value"]),
+            currency=a["currency"],
+            source=a.get("source", "system"),
+            revision_id=a.get("revision_id"),
+            status=a.get("status", "active"),
+            is_point_in_time_verified=bool(a.get("is_point_in_time_verified", False)),
+            provenance_json=json.dumps(a.get("provenance_metadata", {})) if a.get("provenance_metadata") else None,
+        )
+        session.add(m)
+        models.append(m)
+    session.flush()
+    return models
+
+
+def query_corporate_actions(
+    session: Session,
+    asset_id: str | None = None,
+    dataset_id: str | None = None,
+    as_of_date: date | None = None,
+    strict_pit: bool = False,
+) -> list[CorporateActionModel]:
+    """
+    Queries corporate action records with deterministic sorting and optional PIT cutoff.
+    """
+    stmt = select(CorporateActionModel)
+    if dataset_id:
+        stmt = stmt.where(CorporateActionModel.dataset_id == dataset_id)
+    if asset_id:
+        stmt = stmt.where(CorporateActionModel.asset_id == asset_id)
+    if as_of_date:
+        if strict_pit:
+            # Under strict PIT, announcement_date must exist and be <= as_of_date
+            stmt = stmt.where(
+                CorporateActionModel.announcement_date != None,
+                CorporateActionModel.announcement_date <= as_of_date,
+            )
+        else:
+            stmt = stmt.where(CorporateActionModel.effective_date <= as_of_date)
+
+    stmt = stmt.order_by(CorporateActionModel.effective_date.asc(), CorporateActionModel.id.asc())
+    return list(session.scalars(stmt).all())
+
+
 def clear_all_datasets(session: Session) -> None:
     """
-    Clears all datasets, assets, and price bars from the database.
+    Clears all datasets, assets, price bars, and corporate actions from the database.
     Used for test isolation and administrative resets.
     """
+    session.query(CorporateActionModel).delete()
     session.query(PriceBarModel).delete()
     session.query(AssetModel).delete()
     session.query(DatasetModel).delete()

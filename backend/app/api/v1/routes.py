@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -23,12 +24,16 @@ from app.api.v1.robust_routes import router as robust_router
 from app.api.v1.risk_simulation_routes import router as risk_simulation_router
 from app.api.v1.scenario_routes import router as scenario_router
 from app.api.v1.schemas import (
+    CorporateActionCreate,
+    CorporateActionResponse,
     DatasetAssetsResponse,
     DatasetMetadataResponse,
     DatasetQuery,
     DatasetQueryResponse,
     ErrorResponse,
+    ExchangeCalendarResponse,
     HealthResponse,
+    QualityAuditResponse,
     ValidationReportResponse,
 )
 from app.auth.dependencies import check_dataset_access, get_current_active_user
@@ -36,8 +41,12 @@ from app.db.models import UserModel
 from app.db.session import engine, get_db
 from app.market_data.service import (
     DatasetNotFoundError,
+    add_corporate_actions_service,
+    audit_dataset_quality_service,
+    get_calendar_sessions_service,
     get_dataset_metadata,
     list_all_datasets,
+    query_corporate_actions_service,
     query_dataset,
     register_csv_dataset,
     validate_csv,
@@ -339,6 +348,96 @@ def list_dataset_assets(
         }
     except DatasetNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post(
+    "/market-data/corporate-actions",
+    response_model=list[CorporateActionResponse],
+    summary="Register Corporate Actions",
+    description="Registers canonical corporate action events (splits, reverse splits, dividends) for an asset or dataset.",
+)
+def create_corporate_actions_route(
+    actions: list[CorporateActionCreate],
+    current_user: Annotated[UserModel, Depends(get_current_active_user)],
+    session: Annotated[Session, Depends(get_db)],
+):
+    for a in actions:
+        if a.dataset_id:
+            check_dataset_access(session, a.dataset_id, current_user)
+    action_dicts = [a.model_dump() for a in actions]
+    return add_corporate_actions_service(action_dicts)
+
+
+@router.get(
+    "/market-data/corporate-actions",
+    response_model=list[CorporateActionResponse],
+    summary="Query Corporate Actions",
+    description="Queries corporate actions with optional asset_id, dataset_id, and point-in-time cutoff.",
+)
+def query_corporate_actions_route(
+    current_user: Annotated[UserModel, Depends(get_current_active_user)],
+    session: Annotated[Session, Depends(get_db)],
+    asset_id: str | None = None,
+    dataset_id: str | None = None,
+    as_of_date: date | None = None,
+    strict_pit: bool = False,
+):
+    if dataset_id:
+        check_dataset_access(session, dataset_id, current_user)
+    return query_corporate_actions_service(
+        asset_id=asset_id,
+        dataset_id=dataset_id,
+        as_of_date=as_of_date,
+        strict_pit=strict_pit,
+    )
+
+
+@router.post(
+    "/market-data/datasets/{dataset_id}/quality-audit",
+    response_model=QualityAuditResponse,
+    summary="Run Dataset Quality Audit",
+    description="Executes deterministic quality audit inspecting OHLC inversions, non-positive prices, missing sessions, discontinuities, and stale prices.",
+)
+def audit_dataset_quality_route(
+    dataset_id: str,
+    current_user: Annotated[UserModel, Depends(get_current_active_user)],
+    session: Annotated[Session, Depends(get_db)],
+    discontinuity_threshold: float = 0.35,
+    stale_limit_days: int = 10,
+):
+    check_dataset_access(session, dataset_id, current_user)
+    try:
+        return audit_dataset_quality_service(
+            dataset_id=dataset_id,
+            discontinuity_threshold=discontinuity_threshold,
+            stale_limit_days=stale_limit_days,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/market-data/calendars/{market}/sessions",
+    response_model=ExchangeCalendarResponse,
+    summary="Query Exchange Calendar Sessions",
+    description="Returns open trading sessions and documented holidays for US or PSX exchanges within a date range.",
+)
+def get_calendar_sessions_route(
+    market: str,
+    start_date: date,
+    end_date: date,
+    current_user: Annotated[UserModel, Depends(get_current_active_user)],
+):
+    if start_date > end_date:
+        raise HTTPException(status_code=422, detail="start_date must be on or before end_date.")
+    try:
+        return get_calendar_sessions_service(
+            market=market,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.post(

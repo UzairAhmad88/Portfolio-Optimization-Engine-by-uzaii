@@ -361,6 +361,9 @@ def _build_metadata_from_model(model: DatasetModel) -> dict:
         "warnings": model.get_warnings(),
         "user_id": str(model.user_id) if model.user_id else None,
         "is_shared": bool(model.is_shared) if hasattr(model, "is_shared") else False,
+        "point_in_time_status": str(model.point_in_time_status) if getattr(model, "point_in_time_status", None) else "unverified_legacy",
+        "calendar_version": str(model.calendar_version) if getattr(model, "calendar_version", None) else None,
+        "adjustment_policy_version": str(model.adjustment_policy_version) if getattr(model, "adjustment_policy_version", None) else None,
     }
 
 
@@ -624,4 +627,177 @@ def query_dataset(
     return {
         **result,
         "data": [dict(r) for r in filtered],
+    }
+
+
+def audit_dataset_quality_service(
+    dataset_id: str,
+    discontinuity_threshold: float = 0.35,
+    stale_limit_days: int = 10,
+) -> dict[str, Any]:
+    """
+    Performs comprehensive data-quality validation on a registered dataset.
+    """
+    from app.market_data.quality import audit_market_data_quality
+    from app.market_data.corporate_actions import CorporateActionEvent, CorporateActionType, CorporateActionStatus
+
+    rows = get_dataset_rows(dataset_id)
+    with get_db_session() as session:
+        ca_models = repository.query_corporate_actions(session, dataset_id=dataset_id)
+        cas = [
+            CorporateActionEvent(
+                event_id=m.id,
+                asset_id=m.asset_id,
+                ticker=m.ticker,
+                market=m.market,
+                event_type=CorporateActionType(m.event_type),
+                effective_date=m.effective_date,
+                announcement_date=m.announcement_date,
+                ex_date=m.ex_date,
+                record_date=m.record_date,
+                payment_date=m.payment_date,
+                value=m.value,
+                currency=m.currency,
+                source=m.source,
+                revision_id=m.revision_id,
+                status=CorporateActionStatus(m.status),
+                is_point_in_time_verified=m.is_point_in_time_verified,
+            )
+            for m in ca_models
+        ]
+
+    report = audit_market_data_quality(
+        bars=rows,
+        corporate_actions=cas,
+        discontinuity_threshold=discontinuity_threshold,
+        stale_limit_days=stale_limit_days,
+    )
+    return report.to_dict()
+
+
+def add_corporate_actions_service(
+    actions: list[dict[str, Any]],
+    dataset_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Registers corporate actions into the persistent repository.
+    """
+    from app.market_data.corporate_actions import create_deterministic_event_id
+
+    prepared = []
+    for a in actions:
+        ev_id = a.get("id") or a.get("event_id")
+        eff = a["effective_date"] if isinstance(a["effective_date"], date) else date.fromisoformat(str(a["effective_date"]))
+        if not ev_id:
+            ev_id = create_deterministic_event_id(
+                asset_id=a["asset_id"],
+                event_type=a["event_type"],
+                effective_date=eff,
+                source=a.get("source", "user"),
+                revision_id=a.get("revision_id"),
+            )
+        entry = dict(a)
+        entry["event_id"] = ev_id
+        entry["effective_date"] = eff
+        prepared.append(entry)
+
+    with get_db_session() as session:
+        models = repository.save_corporate_actions(session, prepared, dataset_id=dataset_id)
+        res = [
+            {
+                "id": m.id,
+                "dataset_id": m.dataset_id,
+                "asset_id": m.asset_id,
+                "ticker": m.ticker,
+                "market": m.market,
+                "event_type": m.event_type,
+                "effective_date": m.effective_date.isoformat(),
+                "announcement_date": m.announcement_date.isoformat() if m.announcement_date else None,
+                "ex_date": m.ex_date.isoformat() if m.ex_date else None,
+                "record_date": m.record_date.isoformat() if m.record_date else None,
+                "payment_date": m.payment_date.isoformat() if m.payment_date else None,
+                "value": m.value,
+                "currency": m.currency,
+                "source": m.source,
+                "revision_id": m.revision_id,
+                "status": m.status,
+                "is_point_in_time_verified": m.is_point_in_time_verified,
+                "created_at": m.created_at.isoformat(),
+            }
+            for m in models
+        ]
+    return res
+
+
+def query_corporate_actions_service(
+    asset_id: str | None = None,
+    dataset_id: str | None = None,
+    as_of_date: date | None = None,
+    strict_pit: bool = False,
+) -> list[dict[str, Any]]:
+    """
+    Queries corporate actions from the repository.
+    """
+    with get_db_session() as session:
+        models = repository.query_corporate_actions(
+            session=session,
+            asset_id=asset_id,
+            dataset_id=dataset_id,
+            as_of_date=as_of_date,
+            strict_pit=strict_pit,
+        )
+        return [
+            {
+                "id": m.id,
+                "dataset_id": m.dataset_id,
+                "asset_id": m.asset_id,
+                "ticker": m.ticker,
+                "market": m.market,
+                "event_type": m.event_type,
+                "effective_date": m.effective_date.isoformat(),
+                "announcement_date": m.announcement_date.isoformat() if m.announcement_date else None,
+                "ex_date": m.ex_date.isoformat() if m.ex_date else None,
+                "record_date": m.record_date.isoformat() if m.record_date else None,
+                "payment_date": m.payment_date.isoformat() if m.payment_date else None,
+                "value": m.value,
+                "currency": m.currency,
+                "source": m.source,
+                "revision_id": m.revision_id,
+                "status": m.status,
+                "is_point_in_time_verified": m.is_point_in_time_verified,
+                "created_at": m.created_at.isoformat(),
+            }
+            for m in models
+        ]
+
+
+def get_calendar_sessions_service(
+    market: str,
+    start_date: date,
+    end_date: date,
+) -> dict[str, Any]:
+    """
+    Returns calendar metadata, open sessions, and holidays for market in date range.
+    """
+    from app.market_data.calendars import get_calendar
+    from datetime import timedelta
+
+    cal = get_calendar(market)
+    sessions = cal.get_sessions(start_date, end_date)
+    holidays = []
+    cur = start_date
+    one_day = timedelta(days=1)
+    while cur <= end_date:
+        reason = cal.holiday_reason(cur)
+        if reason and reason not in ("Saturday", "Sunday"):
+            holidays.append({"date": cur.isoformat(), "reason": reason})
+        cur += one_day
+
+    return {
+        "market": cal.market,
+        "calendar_id": cal.calendar_id,
+        "version": cal.version,
+        "timezone": cal.tz_name,
+        "sessions": [s.isoformat() for s in sessions],
+        "holidays": holidays,
     }

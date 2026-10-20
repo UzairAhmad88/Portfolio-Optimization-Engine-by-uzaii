@@ -83,6 +83,9 @@ class DatasetModel(Base):
     valid_rows = Column(Integer, nullable=False)
     rejected_rows = Column(Integer, nullable=False)
     status = Column(String(30), default="completed", nullable=False)  # completed, pending, failed
+    point_in_time_status = Column(String(50), default="unverified_legacy", nullable=False)
+    calendar_version = Column(String(50), nullable=True)
+    adjustment_policy_version = Column(String(50), nullable=True)
     errors_json = Column(Text, nullable=True)
     warnings_json = Column(Text, nullable=True)
 
@@ -95,6 +98,12 @@ class DatasetModel(Base):
     )
     price_bars = relationship(
         "PriceBarModel",
+        back_populates="dataset",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    corporate_actions = relationship(
+        "CorporateActionModel",
         back_populates="dataset",
         cascade="all, delete-orphan",
         passive_deletes=True,
@@ -186,6 +195,50 @@ class PriceBarModel(Base):
         ),
         Index("ix_price_bars_dataset_date", "dataset_id", "date"),
         Index("ix_price_bars_dataset_ticker_date", "dataset_id", "ticker", "date"),
+    )
+
+
+class CorporateActionModel(Base):
+    """
+    Persistent record of a corporate action event (stock split, reverse split, cash dividend, symbol change).
+    """
+
+    __tablename__ = "corporate_actions"
+
+    id = Column(String(36), primary_key=True, index=True)
+    dataset_id = Column(
+        String(36),
+        ForeignKey("datasets.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    asset_id = Column(String(100), nullable=False, index=True)
+    ticker = Column(String(50), nullable=False, index=True)
+    market = Column(String(20), nullable=False)
+    event_type = Column(String(50), nullable=False)  # stock_split, reverse_split, cash_dividend, etc.
+    effective_date = Column(Date, nullable=False, index=True)
+    announcement_date = Column(Date, nullable=True)
+    ex_date = Column(Date, nullable=True)
+    record_date = Column(Date, nullable=True)
+    payment_date = Column(Date, nullable=True)
+    value = Column(Float, nullable=False)
+    currency = Column(String(10), nullable=False)
+    source = Column(String(100), nullable=False)
+    revision_id = Column(String(100), nullable=True)
+    status = Column(String(30), default="active", nullable=False)  # active, superseded, cancelled
+    is_point_in_time_verified = Column(Boolean, default=False, nullable=False)
+    provenance_json = Column(Text, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    dataset = relationship("DatasetModel", back_populates="corporate_actions")
+
+    __table_args__ = (
+        Index("ix_corporate_actions_asset_date", "asset_id", "effective_date"),
+        Index("ix_corporate_actions_ticker_date", "ticker", "market", "effective_date"),
     )
 
 

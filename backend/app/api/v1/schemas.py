@@ -88,6 +88,15 @@ class DatasetMetadataResponse(BaseModel):
     is_shared: bool = Field(
         default=False, description="Whether the dataset is shared with all researchers"
     )
+    point_in_time_status: str = Field(
+        default="unverified_legacy", description="Point-in-time verification certification status"
+    )
+    calendar_version: str | None = Field(
+        default=None, description="Exchange calendar version applied to dataset"
+    )
+    adjustment_policy_version: str | None = Field(
+        default=None, description="Corporate action adjustment policy version"
+    )
 
 
 class DatasetQuery(BaseModel):
@@ -131,3 +140,66 @@ class DatasetAssetsResponse(BaseModel):
     assets: list[dict[str, Any]] = Field(
         description="List of verified asset metadata objects"
     )
+
+
+class CorporateActionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    dataset_id: str | None = Field(default=None, description="Associated dataset UUID")
+    asset_id: str = Field(description="Stable economic asset identifier")
+    ticker: str = Field(description="Security ticker symbol")
+    market: str = Field(pattern="^(US|PSX)$", description="Market identifier")
+    event_type: str = Field(description="Type: stock_split, reverse_split, cash_dividend, symbol_change, complex_unsupported")
+    effective_date: date = Field(description="Economic effective date")
+    announcement_date: date | None = Field(default=None, description="Filing/announcement date for PIT cutoff")
+    ex_date: date | None = Field(default=None, description="Ex-dividend/split date")
+    record_date: date | None = Field(default=None, description="Record date")
+    payment_date: date | None = Field(default=None, description="Payment date")
+    value: float = Field(gt=0, description="Event magnitude (split ratio or dividend per share)")
+    currency: str = Field(min_length=3, max_length=3, description="Currency code (USD, PKR)")
+    source: str = Field(default="researcher_upload", description="Data provenance/source identifier")
+    revision_id: str | None = Field(default=None, description="Revision or correction hash")
+    is_point_in_time_verified: bool = Field(default=False, description="Whether announcement date is verified")
+    provenance_metadata: dict[str, Any] | None = Field(default=None, description="Additional provenance audit fields")
+
+
+class CorporateActionResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    dataset_id: str | None
+    asset_id: str
+    ticker: str
+    market: str
+    event_type: str
+    effective_date: str
+    announcement_date: str | None
+    ex_date: str | None
+    record_date: str | None
+    payment_date: str | None
+    value: float
+    currency: str
+    source: str
+    revision_id: str | None
+    status: str
+    is_point_in_time_verified: bool
+    created_at: str
+
+
+class QualityAuditResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    policy_version: str
+    is_valid: bool
+    total_findings: int
+    error_count: int
+    warning_count: int
+    info_count: int
+    findings: list[dict[str, Any]]
+
+
+class ExchangeCalendarResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    market: str
+    calendar_id: str
+    version: str
+    timezone: str
+    sessions: list[str]
+    holidays: list[dict[str, str]]

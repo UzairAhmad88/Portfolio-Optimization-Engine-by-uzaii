@@ -39,6 +39,60 @@ export interface DatasetMetadataResponse {
   warnings: ValidationWarning[];
   user_id?: string | null;
   is_shared?: boolean;
+  point_in_time_status?: string;
+  calendar_version?: string | null;
+  adjustment_policy_version?: string | null;
+}
+
+export interface CorporateActionEvent {
+  id: string;
+  dataset_id?: string | null;
+  asset_id: string;
+  ticker: string;
+  market: 'US' | 'PSX';
+  event_type: 'stock_split' | 'reverse_split' | 'cash_dividend' | 'symbol_change' | 'complex_unsupported';
+  effective_date: string;
+  announcement_date?: string | null;
+  ex_date?: string | null;
+  record_date?: string | null;
+  payment_date?: string | null;
+  value: number;
+  currency: string;
+  source: string;
+  revision_id?: string | null;
+  status: 'active' | 'superseded' | 'cancelled';
+  is_point_in_time_verified: boolean;
+  created_at: string;
+}
+
+export interface QualityFinding {
+  rule_id: string;
+  severity: 'error' | 'warning' | 'info';
+  ticker: string;
+  market: string;
+  date: string;
+  message: string;
+  details?: Record<string, any>;
+  policy_version?: string;
+}
+
+export interface QualityAuditReport {
+  policy_version: string;
+  is_valid: boolean;
+  total_findings: number;
+  error_count: number;
+  warning_count: number;
+  info_count: number;
+  findings: QualityFinding[];
+}
+
+export interface ExchangeCalendarSessionInfo {
+  market: string;
+  calendar_id: string;
+  version: string;
+  timezone: string;
+  sessions: string[];
+  holidays: Array<{ date: string; reason: string }>;
 }
 
 export interface AssetMetadata {
