@@ -1,0 +1,35 @@
+# Virtual environments
+.venv/
+**/.venv/
+venv/
+**/venv/
+ENV/
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Python cache & build artifacts
+__pycache__/
+**/*__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+**/.pytest_cache/
+.coverage
+htmlcov/
+dist/
+**/dist/
+build/
+*.egg-info/
+
+# Databases & local data
+*.db
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+

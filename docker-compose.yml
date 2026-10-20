@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: quant_portfolio_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: quant_user
+      POSTGRES_PASSWORD: quant_password
+      POSTGRES_DB: quant_portfolio_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - quant_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U quant_user -d quant_portfolio_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  quant_pgdata:
+    name: quant_portfolio_pgdata

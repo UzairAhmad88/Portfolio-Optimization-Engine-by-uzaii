@@ -1,0 +1,166 @@
+# SESSION 34 CONTRACTS — ENDOGENOUS LIQUIDITY STRESS TESTING & CASH-AWARE PARTIAL EXECUTION
+## Stage 26 Mathematical, Temporal, and Accounting Specifications
+
+**Document Version:** 1.0.0  
+**Status:** Approved Mathematical & Architectural Contract  
+**Roadmap Stage:** Stage 26  
+**Date:** 2026-10-19  
+
+---
+
+## 1. Overview & Objectives
+
+This contract specifies the mathematical, portfolio accounting, and API requirements for **Stage 26 — Endogenous Liquidity Stress Testing & Cash-Aware Partial Execution**.
+
+Stage 26 directly addresses the modeling limitations identified in the Session 34 independent audit:
+1. **Cash-Aware Partial Execution (`cap` policy):** Eliminates weight vector renormalization during partial fills. Unexecuted trade notional is held in uninvested cash reserves ($w_{\text{cash}} = 1.0 - \sum_{i=1}^N w_i$), with exact daily cash drift and risk-free interest accrual.
+2. **Endogenous Scenario-Dependent Liquidity Stress Testing:** Upgrades $\text{L-VaR}_{99}$ and $\text{L-CVaR}_{99}$ from static deterministic constants to state-dependent market crash liquidity stress testing, modeling non-linear bid-ask spread widening and market volume freezes in joint return tail scenarios.
+
+---
+
+## 2. Cash-Aware Partial Execution Accounting
+
+### 2.1 Capped Trade Sizing
+At rebalance date $t_k$, with portfolio equity $V_{t_k}^{\text{pre}}$, target weights $w_{t_k}^* \in [0, 1]^N$ ($\sum_{i=1}^N w_{t_k, i}^* = 1.0$), and pre-trade drifted risky asset weights $w_{t_k}^{\text{drift}} \in [0, 1]^N$ where $w_{\text{cash}, t_k}^{\text{drift}} = 1.0 - \sum_{i=1}^N w_{t_k, i}^{\text{drift}}$:
+
+For each asset $i$:
+$$\text{Desired Notional: } \Delta N_i^* = |w_{t_k, i}^* - w_{t_k, i}^{\text{drift}}| \cdot V_{t_k}^{\text{pre}}$$
+$$\text{Volume Participation Rate: } \text{PR}_i = \frac{\Delta N_i^*}{\text{ADV}_i \cdot H}$$
+
+Under the `cap` policy with maximum participation rate $\text{PR}_{\max}$:
+$$\text{Max Allowed Notional: } \Delta N_{i, \max} = \text{PR}_{\max} \cdot \text{ADV}_i \cdot H$$
+$$\text{Executed Notional: } \Delta N_i^{\text{exec}} = \min\left(\Delta N_i^*, \Delta N_{i, \max}\right)$$
+
+### 2.2 Post-Trade Weights Without Renormalization
+Executed trade fraction for asset $i$:
+$$\Delta w_i^{\text{exec}} = \frac{\Delta N_i^{\text{exec}}}{V_{t_k}^{\text{pre}}}$$
+The new post-rebalance asset weight is:
+$$w_{t_k, i} = \begin{cases}
+w_{t_k, i}^{\text{drift}} + \Delta w_i^{\text{exec}} & \text{if } w_{t_k, i}^* \ge w_{t_k, i}^{\text{drift}} \\
+w_{t_k, i}^{\text{drift}} - \Delta w_i^{\text{exec}} & \text{if } w_{t_k, i}^* < w_{t_k, i}^{\text{drift}}
+\end{cases}$$
+
+The remaining portfolio equity remains in cash:
+$$w_{t_k, \text{cash}} = 1.0 - \sum_{i=1}^N w_{t_k, i}$$
+
+**Invariants:**
+1. $w_{t_k, i} \ge 0$ for all $i \in \{1, \dots, N\}$.
+2. $w_{t_k, \text{cash}} \ge 0$.
+3. $\sum_{i=1}^N w_{t_k, i} + w_{t_k, \text{cash}} \equiv 1.0$ (Strict cash conservation).
+4. Unaffected assets ($PR_j \le PR_{\max}$) execute their full intended rebalance notional without artificial rescaling.
+
+### 2.3 Friction Deduction
+Execution costs (half-spread crossing, non-linear market impact, commission) are computed strictly on $\Delta N_i^{\text{exec}}$:
+$$C_{\text{total}, t_k} = \sum_{i=1}^N C_i\left(\Delta N_i^{\text{exec}}\right)$$
+$$V_{t_k}^{\text{post}} = \max\left(0.0, V_{t_k}^{\text{pre}} - C_{\text{total}, t_k}\right)$$
+
+### 2.4 Multi-Asset Daily Compounding with Cash Accrual
+For any out-of-sample trading day $t$ between rebalance dates:
+- Risky asset return vector: $r_t \in \mathbb{R}^N$.
+- Cash return (daily risk-free interest accrual):
+  $$r_{\text{cash}, t} = \frac{r_f}{\text{annualization\_factor}}$$
+- Portfolio gross daily return:
+  $$R_{p, t}^{\text{gross}} = \sum_{i=1}^N w_{t, i}^{\text{drift}} r_{i, t} + w_{t, \text{cash}}^{\text{drift}} r_{\text{cash}, t}$$
+- Daily equity progression:
+  $$V_{t+1} = V_t \cdot \left(1.0 + R_{p, t}^{\text{gross}}\right)$$
+- Weight drift for day $t+1$:
+  $$w_{t+1, i}^{\text{drift}} = \frac{w_{t, i}^{\text{drift}} (1.0 + r_{i, t})}{1.0 + R_{p, t}^{\text{gross}}}$$
+  $$w_{t+1, \text{cash}}^{\text{drift}} = \frac{w_{t, \text{cash}}^{\text{drift}} (1.0 + r_{\text{cash}, t})}{1.0 + R_{p, t}^{\text{gross}}}$$
+- Exact Drift Conservation: $\sum_{i=1}^N w_{t+1, i}^{\text{drift}} + w_{t+1, \text{cash}}^{\text{drift}} \equiv 1.0$.
+
+---
+
+## 3. Endogenous Scenario-Dependent Liquidity Stress Testing
+
+### 3.1 Motivation & Theoretical Foundation
+During systemic market dislocations (e.g. 2008 Lehman crisis, March 2020 COVID shock), market liquidity does not remain at its calm historical average:
+1. Bid-ask spreads widen significantly as market makers withdraw quotes.
+2. Market trading volume / depth evaporates (liquidity freeze).
+3. The cost to liquidate a portfolio is severely magnified precisely in the adverse tail scenarios where capital preservation is paramount.
+
+### 3.2 Endogenous Stress Formulation
+Let $r_s \in \mathbb{R}^N$ denote a simulated joint return scenario generated by the fitted Vine Copula model ($s \in \{1, \dots, M\}$).
+Let $r_{m, s} = \sum_{i=1}^N w_i^* r_{i, s}$ denote the portfolio market return under scenario $s$.
+
+1. **Endogenous Spread Widening:**
+   $$\text{Spread}_i(s) = \text{Spread}_{0, i} \cdot \left(1.0 + \kappa_{\text{spread}} \cdot \max(0.0, -r_{i, s})\right)$$
+   where $\kappa_{\text{spread}} \ge 0$ is the spread stress sensitivity parameter (default: $5.0$).
+   *Interpretation:* A $10\%$ asset drawdown widens the bid-ask spread by $1 + 5.0 \times 0.10 = 1.5\times$ ($+50\%$).
+
+2. **Endogenous Liquidity Freeze (Volume Contraction):**
+   $$\text{ADV}_i(s) = \frac{\text{ADV}_{0, i}}{1.0 + \eta_{\text{adv}} \cdot \max(0.0, -r_{m, s})}$$
+   where $\eta_{\text{adv}} \ge 0$ is the volume freeze sensitivity parameter (default: $5.0$).
+   *Interpretation:* A $10\%$ portfolio crash reduces available ADV to $1 / (1 + 5.0 \times 0.10) \approx 66.7\%$ of normal depth.
+
+3. **Scenario-Dependent Liquidation Cost:**
+   For scenario $s$, the liquidation notional for asset $i$ is $N_{\text{liq}, i} = w_i^* \cdot V$.
+   The participation rate under scenario $s$ is:
+   $$\text{PR}_i(s) = \frac{N_{\text{liq}, i}}{\text{ADV}_i(s) \cdot H}$$
+   The endogenous liquidation friction for scenario $s$ is:
+   $$C_{\text{liq}, i}(s) = N_{\text{liq}, i} \left[ \frac{\text{Spread}_i(s) \cdot 10^{-4}}{2} + c_{\text{temp}} \sigma_i \sqrt{\min(\text{PR}_i(s), 2.0)} + c_{\text{perm}} \sigma_i \min\left(\frac{N_{\text{liq}, i}}{\text{ADV}_i(s)}, 1.0\right) + \text{Comm}_{\text{bps}} \cdot 10^{-4} \right]$$
+   Total liquidation drag rate for scenario $s$:
+   $$c_{\text{liq}}(s) = \frac{\sum_{i=1}^N C_{\text{liq}, i}(s)}{V}$$
+
+4. **Stressed Loss Distribution & Risk Measures:**
+   Let $L_{\text{market}}(s) = -r_{m, s}$ denote the market portfolio loss.
+   Total endogenous stressed loss:
+   $$L_{\text{stressed}}(s) = L_{\text{market}}(s) + c_{\text{liq}}(s)$$
+   Endogenous Liquidity-Adjusted Value-at-Risk:
+   $$\text{L-VaR}_{99}^{\text{stressed}} = \text{Quantile}_{0.99}\left(\{L_{\text{stressed}}(s)\}_{s=1}^M\right)$$
+   Endogenous Liquidity-Adjusted Expected Shortfall (CVaR):
+   $$\text{L-CVaR}_{99}^{\text{stressed}} = \frac{1}{\sum_{s=1}^M \mathbf{1}_{\{L_{\text{stressed}}(s) \ge \text{L-VaR}_{99}^{\text{stressed}}\}}} \sum_{s=1}^M L_{\text{stressed}}(s) \cdot \mathbf{1}_{\{L_{\text{stressed}}(s) \ge \text{L-VaR}_{99}^{\text{stressed}}\}}$$
+
+### 3.3 Theoretical Invariants & Boundary Proofs
+1. **Calm Limit Identity:**
+   When $\kappa_{\text{spread}} = 0$ and $\eta_{\text{adv}} = 0$:
+   $$\text{Spread}_i(s) \equiv \text{Spread}_{0, i}, \quad \text{ADV}_i(s) \equiv \text{ADV}_{0, i} \implies c_{\text{liq}}(s) \equiv c_{\text{liq}}^{\text{det}}$$
+   Therefore:
+   $$\text{L-VaR}_{99}^{\text{stressed}} \equiv \text{L-VaR}_{99}^{\text{det}}, \quad \text{L-CVaR}_{99}^{\text{stressed}} \equiv \text{L-CVaR}_{99}^{\text{det}}$$
+2. **Monotonic Tail Expansion:**
+   For any $\kappa_{\text{spread}} \ge 0, \eta_{\text{adv}} \ge 0$:
+   $$c_{\text{liq}}(s) \ge c_{\text{liq}}^{\text{det}} \quad \forall s \text{ with negative returns } (r_s \le 0)$$
+   $$\implies \text{L-CVaR}_{99}^{\text{stressed}} \ge \text{L-CVaR}_{99}^{\text{det}} \ge \text{CVaR}_{99}^{\text{market}}$$
+3. **Super-Additivity in Crisis:**
+   Because liquidation cost $c_{\text{liq}}(s)$ is positively correlated with market loss $L_{\text{market}}(s)$, the joint tail quantile expands beyond the simple sum of independent expectations:
+   $$\operatorname{Cov}(L_{\text{market}}, c_{\text{liq}}) > 0$$
+
+---
+
+## 4. API & Schema Contracts
+
+### 4.1 Extended `VineBacktestRequest`
+```python
+class VineBacktestRequest(BaseModel):
+    # Existing fields from Stage 24-25 ...
+    execution_model: Literal["fixed_bps", "linear", "square_root"] = "square_root"
+    bid_ask_spread_bps: float = Field(default=5.0, ge=0.0)
+    max_participation_rate: float = Field(default=0.10, ge=0.001, le=1.0)
+    participation_policy: Literal["warn", "cap", "reject"] = "warn"
+    execution_horizon_days: float = Field(default=1.0, ge=0.1)
+    c_temp: float = Field(default=0.5, ge=0.0)
+    c_perm: float = Field(default=0.1, ge=0.0)
+    default_adv: float = Field(default=10_000_000.0, gt=0.0)
+
+    # New Stage 26 Endogenous Stress Fields
+    enable_endogenous_liquidity: bool = True
+    spread_stress_sensitivity: float = Field(default=5.0, ge=0.0, le=50.0) # kappa_spread
+    adv_stress_sensitivity: float = Field(default=5.0, ge=0.0, le=50.0)    # eta_adv
+```
+
+### 4.2 Extended `VineBacktestStrategyMetrics` & `VineBacktestRebalanceEvent`
+- `stressed_l_var_99`: float (Endogenous scenario-stressed L-VaR 99%)
+- `stressed_l_cvar_99`: float (Endogenous scenario-stressed L-CVaR 99%)
+- `cash_weight`: float (Uninvested cash fraction $w_{\text{cash}} \in [0, 1]$)
+- `average_cash_weight`: float (Average cash held over the backtest)
+
+---
+
+## 5. Acceptance Test Criteria
+
+1. **Exact Cash Conservation:** Under `cap` policy with active binding caps, $\sum w_i + w_{\text{cash}} \equiv 1.0$ within $10^{-12}$.
+2. **Partial Fill Unaffected Invariance:** For assets whose desired trade is within $\text{PR}_{\max}$, their executed notional matches desired notional exactly; no artificial scaling occurs.
+3. **Monotonic Endogenous Risk Expansion:**
+   $$\text{L-CVaR}_{99}^{\text{stressed}}(\kappa=5, \eta=5) \ge \text{L-CVaR}_{99}^{\text{det}} \ge \text{CVaR}_{99}^{\text{market}}$$
+4. **Calm Boundary Identity:** When $\kappa = 0, \eta = 0$, $\text{L-CVaR}^{\text{stressed}} \equiv \text{L-CVaR}^{\text{det}}$ to $< 10^{-4}$.
+5. **Cash Drift & Risk-Free Accrual:** Portfolios holding cash earn $r_f / 252$ on cash balance and drift smoothly without discontinuity.
+6. **Zero Regression:** All existing 413 backend tests and 42 frontend tests continue to pass.
