@@ -8,9 +8,11 @@ import {
   Trash2,
   Activity,
   Layers,
+  Lock,
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import { useDataset } from '../../context/DatasetContext';
+import { SnapshotProvenanceBadge } from '../common/SnapshotProvenanceBadge';
 import type {
   BacktestListItem,
   BacktestOptimizationObjective,
@@ -42,6 +44,7 @@ export const BacktestingPage: React.FC<BacktestingPageProps> = ({ initialPortfol
   const [trainingWindow, setTrainingWindow] = useState<number>(126);
   const [testWindow, setTestWindow] = useState<number>(21);
   const [optObjective, setOptObjective] = useState<BacktestOptimizationObjective>('max_sharpe');
+  const [autoSnapshot, setAutoSnapshot] = useState<boolean>(true);
 
   // Execution & Results State
   const [isRunning, setIsRunning] = useState<boolean>(false);
@@ -156,6 +159,7 @@ export const BacktestingPage: React.FC<BacktestingPageProps> = ({ initialPortfol
       test_window: Number(testWindow),
       optimization_objective: optObjective,
       risk_free_rate: 0.02,
+      auto_snapshot: autoSnapshot,
     };
 
     try {
@@ -552,6 +556,21 @@ export const BacktestingPage: React.FC<BacktestingPageProps> = ({ initialPortfol
                 </div>
               </div>
 
+              {/* Immutable Snapshot Toggle */}
+              <div className="flex items-center gap-2 pt-2">
+                <input
+                  type="checkbox"
+                  id="auto_snapshot"
+                  checked={autoSnapshot}
+                  onChange={(e) => setAutoSnapshot(e.target.checked)}
+                  className="rounded border-slate-700 bg-slate-950 text-sky-500 focus:ring-sky-500"
+                />
+                <label htmlFor="auto_snapshot" className="text-slate-300 text-xs cursor-pointer flex items-center gap-1.5 select-none">
+                  <Lock size={12} className="text-emerald-400" />
+                  Seal Immutable Snapshot (0.0 Drift Protection)
+                </label>
+              </div>
+
               <button
                 type="submit"
                 disabled={isRunning}
@@ -667,6 +686,12 @@ export const BacktestingPage: React.FC<BacktestingPageProps> = ({ initialPortfol
                   {result.metrics.effective_start_date} → {result.metrics.effective_end_date} ({result.metrics.observation_count} bars)
                 </div>
               </div>
+
+              {/* Dataset Snapshot Provenance Badge */}
+              <SnapshotProvenanceBadge
+                snapshotId={result.snapshot_id}
+                provenance={result.snapshot_provenance}
+              />
 
               {/* Equity Curve SVG Chart */}
               <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-3">

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import { useDataset } from '../../context/DatasetContext';
+import { SnapshotProvenanceBadge } from '../common/SnapshotProvenanceBadge';
 import type {
   ComparisonResponse,
   DatasetMetadataResponse,
@@ -972,6 +973,21 @@ export const ResearchLabPage: React.FC = () => {
                   )}
                 </div>
               </div>
+
+              {/* Immutable Snapshot Provenance & Verification Badge */}
+              {selectedRunDetail.snapshot_id && (
+                <div style={{ marginBottom: '16px' }}>
+                  <SnapshotProvenanceBadge
+                    snapshotId={selectedRunDetail.snapshot_id}
+                    provenance={{
+                      snapshot_id: selectedRunDetail.snapshot_id,
+                      manifest_sha256: selectedRunDetail.dataset_version_hash || undefined,
+                      point_in_time_status: selectedRunDetail.is_reproducible ? 'verified_point_in_time' : 'unverified_legacy',
+                      is_frozen: true,
+                    }}
+                  />
+                </div>
+              )}
 
               {/* KPI Metrics Grid */}
               {selectedRunDetail.summary_kpis && (

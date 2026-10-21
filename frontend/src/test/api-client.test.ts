@@ -2032,6 +2032,128 @@ describe('API Client Layer', () => {
     expect(result.tca_report?.provenance.reconciliation_status).toBe('exact_modeled_identity_verified');
     expect(result.tca_report?.provenance.decomposition_type).toBe('structural_modeled_identity');
   });
+
+  it('creates dataset snapshots via apiClient.createDatasetSnapshot', async () => {
+    const mockSnapshot = {
+      id: 'snap-uuid-1',
+      snapshot_id: 'snap-uuid-1',
+      dataset_id: 'ds-test-1',
+      tag: 'v2024-Q1',
+      description: 'Production research snapshot',
+      snapshot_type: 'manual',
+      manifest_sha256: 'a'.repeat(64),
+      manifest_hash: 'a'.repeat(64),
+      manifest: {},
+      as_of_date: '2024-03-31',
+      point_in_time_status: 'verified_point_in_time',
+      is_frozen: true,
+      total_bars_count: 500,
+      bar_count: 500,
+      total_actions_count: 5,
+      created_at: '2026-03-31T00:00:00Z',
+    };
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => mockSnapshot,
+    } as Response);
+
+    const result = await apiClient.createDatasetSnapshot('ds-test-1', {
+      tag: 'v2024-Q1',
+      description: 'Production research snapshot',
+      as_of_date: '2024-03-31',
+      strict_pit: true,
+    });
+
+    expect(result.id).toBe('snap-uuid-1');
+    expect(result.manifest_sha256).toBe('a'.repeat(64));
+    expect(result.is_frozen).toBe(true);
+    expect(result.total_bars_count).toBe(500);
+  });
+
+  it('lists dataset snapshots via apiClient.listDatasetSnapshots', async () => {
+    const mockSnapshots = [
+      {
+        id: 'snap-uuid-1',
+        snapshot_id: 'snap-uuid-1',
+        dataset_id: 'ds-test-1',
+        tag: 'v2024-Q1',
+        snapshot_type: 'manual',
+        manifest_sha256: 'a'.repeat(64),
+        manifest_hash: 'a'.repeat(64),
+        manifest: {},
+        point_in_time_status: 'verified_point_in_time',
+        is_frozen: true,
+        total_bars_count: 500,
+        bar_count: 500,
+        total_actions_count: 5,
+        created_at: '2026-03-31T00:00:00Z',
+      },
+    ];
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => mockSnapshots,
+    } as Response);
+
+    const result = await apiClient.listDatasetSnapshots('ds-test-1');
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('snap-uuid-1');
+  });
+
+  it('gets a single snapshot via apiClient.getDatasetSnapshot', async () => {
+    const mockSnapshot = {
+      id: 'snap-uuid-1',
+      snapshot_id: 'snap-uuid-1',
+      dataset_id: 'ds-test-1',
+      snapshot_type: 'manual',
+      manifest_sha256: 'b'.repeat(64),
+      manifest_hash: 'b'.repeat(64),
+      manifest: {},
+      point_in_time_status: 'verified_point_in_time',
+      is_frozen: true,
+      total_bars_count: 1200,
+      bar_count: 1200,
+      total_actions_count: 0,
+      created_at: '2026-03-31T00:00:00Z',
+    };
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => mockSnapshot,
+    } as Response);
+
+    const result = await apiClient.getDatasetSnapshot('snap-uuid-1');
+    expect(result.id).toBe('snap-uuid-1');
+    expect(result.manifest_sha256).toBe('b'.repeat(64));
+  });
+
+  it('verifies snapshot cryptographic integrity via apiClient.verifySnapshotIntegrity', async () => {
+    const mockVerifyResponse = {
+      snapshot_id: 'snap-uuid-1',
+      is_verified: true,
+      manifest_sha256: 'c'.repeat(64),
+      expected_hash: 'c'.repeat(64),
+      computed_hash: 'c'.repeat(64),
+      message: 'Cryptographic payload digest matches manifest digest exactly.',
+      verified_at: '2026-10-21T18:00:00Z',
+    };
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      json: async () => mockVerifyResponse,
+    } as Response);
+
+    const result = await apiClient.verifySnapshotIntegrity('snap-uuid-1');
+    expect(result.is_verified).toBe(true);
+    expect(result.manifest_sha256).toBe('c'.repeat(64));
+    expect(result.expected_hash).toBe('c'.repeat(64));
+    expect(result.computed_hash).toBe('c'.repeat(64));
+  });
 });
 
 

@@ -12,6 +12,10 @@ import {
   HardDrive,
   ShieldCheck,
   Activity,
+  Lock,
+  Plus,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import { useDataset } from '../../context/DatasetContext';
@@ -19,6 +23,7 @@ import type {
   CorporateActionEvent,
   DatasetMetadataResponse,
   DatasetQueryResponse,
+  DatasetSnapshotResponse,
   QualityAuditReport,
   ValidationReportResponse,
 } from '../../types/api';
@@ -59,9 +64,24 @@ export const MarketDataPage: React.FC = () => {
   const [isLoadingCAs, setIsLoadingCAs] = useState<boolean>(false);
   const [caError, setCaError] = useState<string | null>(null);
 
+  // Dataset Snapshots state
+  const [snapshots, setSnapshots] = useState<DatasetSnapshotResponse[]>([]);
+  const [isLoadingSnapshots, setIsLoadingSnapshots] = useState<boolean>(false);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
+  const [showCreateSnapshot, setShowCreateSnapshot] = useState<boolean>(false);
+  const [newSnapTag, setNewSnapTag] = useState<string>('');
+  const [newSnapDesc, setNewSnapDesc] = useState<string>('');
+  const [newSnapAsOfDate, setNewSnapAsOfDate] = useState<string>('');
+  const [newSnapStrictPit, setNewSnapStrictPit] = useState<boolean>(false);
+  const [isCreatingSnapshot, setIsCreatingSnapshot] = useState<boolean>(false);
+  const [verifyingSnapId, setVerifyingSnapId] = useState<string | null>(null);
+  const [verifyStatus, setVerifyStatus] = useState<Record<string, { verified: boolean; msg: string }>>({});
+  const [copiedHash, setCopiedHash] = useState<string | null>(null);
+
   useEffect(() => {
     if (currentDataset) {
       handleFetchCorporateActions(currentDataset.dataset_id);
+      handleFetchSnapshots(currentDataset.dataset_id);
       setQualityReport(null);
     }
   }, [currentDataset?.dataset_id]);
@@ -90,6 +110,62 @@ export const MarketDataPage: React.FC = () => {
       setCaError(err.message || 'Failed to fetch corporate actions.');
     } finally {
       setIsLoadingCAs(false);
+    }
+  };
+
+  const handleFetchSnapshots = async (dsId: string) => {
+    setIsLoadingSnapshots(true);
+    setSnapshotError(null);
+    try {
+      const data = await apiClient.listDatasetSnapshots(dsId);
+      setSnapshots(data);
+    } catch (err: any) {
+      setSnapshotError(err.message || 'Failed to fetch snapshots.');
+    } finally {
+      setIsLoadingSnapshots(false);
+    }
+  };
+
+  const handleCreateSnapshotSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentDataset) return;
+    setIsCreatingSnapshot(true);
+    setSnapshotError(null);
+    try {
+      await apiClient.createDatasetSnapshot(currentDataset.dataset_id, {
+        tag: newSnapTag.trim() || null,
+        description: newSnapDesc.trim() || null,
+        as_of_date: newSnapAsOfDate || null,
+        strict_pit: newSnapStrictPit,
+      });
+      setShowCreateSnapshot(false);
+      setNewSnapTag('');
+      setNewSnapDesc('');
+      setNewSnapAsOfDate('');
+      setNewSnapStrictPit(false);
+      await handleFetchSnapshots(currentDataset.dataset_id);
+    } catch (err: any) {
+      setSnapshotError(err.message || 'Failed to capture snapshot.');
+    } finally {
+      setIsCreatingSnapshot(false);
+    }
+  };
+
+  const handleVerifySnapshot = async (snapId: string) => {
+    setVerifyingSnapId(snapId);
+    try {
+      const res = await apiClient.verifySnapshotIntegrity(snapId);
+      setVerifyStatus((prev) => ({
+        ...prev,
+        [snapId]: { verified: res.is_verified, msg: res.message },
+      }));
+    } catch (err: any) {
+      setVerifyStatus((prev) => ({
+        ...prev,
+        [snapId]: { verified: false, msg: err.message || 'Verification failed.' },
+      }));
+    } finally {
+      setVerifyingSnapId(null);
     }
   };
 
@@ -648,6 +724,235 @@ export const MarketDataPage: React.FC = () => {
                 </div>
               </div>
             ) : null}
+          </div>
+
+          {/* Dataset Snapshots & Cryptographic Lineage */}
+          <div style={{ marginTop: '24px', borderTop: '1px solid var(--border-medium)', paddingTop: '20px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+              <div>
+                <h4 style={{ fontSize: '14px', fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Lock size={15} style={{ color: 'var(--accent)' }} />
+                  Dataset Snapshots &amp; Cryptographic Lineage ({snapshots.length})
+                </h4>
+                <p style={{ margin: '4px 0 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                  Point-in-time immutable frozen datasets with SHA-256 Merkle manifest digests.
+                </p>
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => currentDataset && handleFetchSnapshots(currentDataset.dataset_id)}
+                  disabled={isLoadingSnapshots}
+                  style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                >
+                  <RefreshCw size={13} className={isLoadingSnapshots ? 'spin' : ''} />
+                  <span>Refresh</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  onClick={() => setShowCreateSnapshot(!showCreateSnapshot)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                >
+                  <Plus size={13} />
+                  <span>Capture Snapshot</span>
+                </button>
+              </div>
+            </div>
+
+            {snapshotError && (
+              <div className="alert alert-danger" style={{ marginBottom: '12px' }}>
+                <XCircle size={15} style={{ flexShrink: 0 }} />
+                <div>{snapshotError}</div>
+              </div>
+            )}
+
+            {showCreateSnapshot && (
+              <form
+                onSubmit={handleCreateSnapshotSubmit}
+                style={{
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border-medium)',
+                  borderRadius: '6px',
+                  padding: '16px',
+                  marginBottom: '16px',
+                }}
+              >
+                <h5 style={{ fontSize: '13px', fontWeight: 600, marginBottom: '12px' }}>Create Frozen Research Snapshot</h5>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '12px' }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Version Tag</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="e.g. v2024-Q1-prod"
+                      value={newSnapTag}
+                      onChange={(e) => setNewSnapTag(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Cutoff Date (As-Of PIT)</label>
+                    <input
+                      type="date"
+                      className="form-input"
+                      value={newSnapAsOfDate}
+                      onChange={(e) => setNewSnapAsOfDate(e.target.value)}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">Description</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder="Snapshot notes..."
+                      value={newSnapDesc}
+                      onChange={(e) => setNewSnapDesc(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    <input
+                      type="checkbox"
+                      checked={newSnapStrictPit}
+                      onChange={(e) => setNewSnapStrictPit(e.target.checked)}
+                    />
+                    Strict Point-in-Time Corporate Actions Filtering
+                  </label>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => setShowCreateSnapshot(false)}
+                      disabled={isCreatingSnapshot}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="btn btn-primary btn-sm"
+                      disabled={isCreatingSnapshot}
+                    >
+                      {isCreatingSnapshot ? 'Freezing Snapshot...' : 'Freeze & Hash'}
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
+
+            {isLoadingSnapshots ? (
+              <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+                <RefreshCw size={14} className="spin" style={{ display: 'inline', marginRight: '6px' }} />
+                Loading dataset snapshots...
+              </div>
+            ) : snapshots.length > 0 ? (
+              <div className="table-container" style={{ maxHeight: '220px' }}>
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Snapshot ID</th>
+                      <th>Tag</th>
+                      <th>As-Of Date</th>
+                      <th>Bars</th>
+                      <th>Manifest SHA-256 Digest</th>
+                      <th>Frozen At</th>
+                      <th>Integrity Check</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {snapshots.map((snap) => {
+                      const snapId = snap.id || snap.snapshot_id || '';
+                      const snapHash = snap.manifest_sha256 || snap.manifest_hash || '';
+                      const barCount = snap.total_bars_count ?? snap.bar_count ?? 0;
+                      const v = verifyStatus[snapId];
+                      const isVerifying = verifyingSnapId === snapId;
+                      return (
+                        <tr key={snapId}>
+                          <td className="font-mono" style={{ fontSize: '11px', fontWeight: 600 }}>
+                            {snapId.slice(0, 8)}...
+                          </td>
+                          <td>
+                            {snap.tag ? <span className="badge badge-neutral">{snap.tag}</span> : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                          </td>
+                          <td className="font-mono">{snap.as_of_date || 'Full Universe'}</td>
+                          <td className="font-mono num-cell">{barCount.toLocaleString()}</td>
+                          <td>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <span
+                                className="font-mono"
+                                style={{
+                                  fontSize: '11px',
+                                  background: 'var(--bg-tertiary)',
+                                  padding: '2px 6px',
+                                  borderRadius: '4px',
+                                  maxWidth: '140px',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                                title={snapHash}
+                              >
+                                {snapHash}
+                              </span>
+                              <button
+                                type="button"
+                                className="btn-icon"
+                                onClick={() => {
+                                  navigator.clipboard.writeText(snapHash);
+                                  setCopiedHash(snapId);
+                                  setTimeout(() => setCopiedHash(null), 2000);
+                                }}
+                                title="Copy Full Manifest Hash"
+                                style={{ background: 'none', border: 'none', padding: '2px', cursor: 'pointer', color: 'var(--text-muted)' }}
+                              >
+                                {copiedHash === snapId ? <Check size={12} style={{ color: 'var(--success)' }} /> : <Copy size={12} />}
+                              </button>
+                            </div>
+                          </td>
+                          <td className="font-mono" style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                            {snap.created_at ? new Date(snap.created_at).toISOString().slice(0, 16).replace('T', ' ') : '—'}
+                          </td>
+                          <td>
+                            {v ? (
+                              <span
+                                className={`badge ${v.verified ? 'badge-success' : 'badge-danger'}`}
+                                title={v.msg}
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                              >
+                                {v.verified ? <ShieldCheck size={11} /> : <AlertTriangle size={11} />}
+                                {v.verified ? 'VERIFIED' : 'FAILED'}
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                style={{ padding: '2px 8px', fontSize: '11px' }}
+                                onClick={() => handleVerifySnapshot(snapId)}
+                                disabled={isVerifying}
+                              >
+                                {isVerifying ? (
+                                  <>
+                                    <RefreshCw size={11} className="spin" style={{ marginRight: '4px' }} />
+                                    Checking...
+                                  </>
+                                ) : (
+                                  'Verify Digest'
+                                )}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div style={{ padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                No frozen snapshots registered yet. Freezing a snapshot produces a deterministic, cryptographically signed dataset manifest for point-in-time replay and backtest verification.
+              </div>
+            )}
           </div>
 
           {/* Historical Data Query Tool */}

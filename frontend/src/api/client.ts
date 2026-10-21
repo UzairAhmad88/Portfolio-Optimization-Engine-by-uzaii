@@ -30,6 +30,9 @@ import type {
   DatasetMetadataResponse,
   DatasetQuery,
   DatasetQueryResponse,
+  DatasetSnapshotCreateRequest,
+  DatasetSnapshotResponse,
+  DatasetSnapshotVerifyResponse,
   ExchangeCalendarSessionInfo,
   QualityAuditReport,
   DynamicFactorBacktestRequest,
@@ -285,6 +288,42 @@ export const apiClient = {
     const query = new URLSearchParams({ start_date: startDate, end_date: endDate });
     const res = await secureFetch(`${BASE_URL}/market-data/calendars/${encodeURIComponent(market)}/sessions?${query.toString()}`);
     return handleResponse<ExchangeCalendarSessionInfo>(res);
+  },
+
+  // --- Immutable Dataset Snapshot & Provenance APIs ---
+  async createDatasetSnapshot(
+    datasetId: string,
+    req: DatasetSnapshotCreateRequest
+  ): Promise<DatasetSnapshotResponse> {
+    const res = await secureFetch(`${BASE_URL}/datasets/${encodeURIComponent(datasetId)}/snapshots`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+    return handleResponse<DatasetSnapshotResponse>(res);
+  },
+
+  async listDatasetSnapshots(
+    datasetId: string,
+    limit?: number,
+    offset?: number
+  ): Promise<DatasetSnapshotResponse[]> {
+    const query = new URLSearchParams();
+    if (limit) query.append('limit', String(limit));
+    if (offset) query.append('offset', String(offset));
+    const qs = query.toString() ? `?${query.toString()}` : '';
+    const res = await secureFetch(`${BASE_URL}/datasets/${encodeURIComponent(datasetId)}/snapshots${qs}`);
+    return handleResponse<DatasetSnapshotResponse[]>(res);
+  },
+
+  async getDatasetSnapshot(snapshotId: string): Promise<DatasetSnapshotResponse> {
+    const res = await secureFetch(`${BASE_URL}/datasets/snapshots/${encodeURIComponent(snapshotId)}`);
+    return handleResponse<DatasetSnapshotResponse>(res);
+  },
+
+  async verifySnapshotIntegrity(snapshotId: string): Promise<DatasetSnapshotVerifyResponse> {
+    const res = await secureFetch(`${BASE_URL}/datasets/snapshots/${encodeURIComponent(snapshotId)}/verify`);
+    return handleResponse<DatasetSnapshotVerifyResponse>(res);
   },
 
   // --- Portfolio & Quantitative Analytics APIs ---

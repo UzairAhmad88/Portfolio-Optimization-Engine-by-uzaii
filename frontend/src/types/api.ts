@@ -95,6 +95,46 @@ export interface ExchangeCalendarSessionInfo {
   holidays: Array<{ date: string; reason: string }>;
 }
 
+export interface DatasetSnapshotCreateRequest {
+  tag?: string | null;
+  description?: string | null;
+  as_of_date?: string | null;
+  strict_pit?: boolean;
+  adjustment_policy_version?: string | null;
+}
+
+export interface DatasetSnapshotResponse {
+  id: string;
+  snapshot_id?: string;
+  dataset_id: string;
+  user_id?: string | null;
+  tag?: string | null;
+  description?: string | null;
+  snapshot_type: string;
+  manifest_sha256: string;
+  manifest_hash?: string;
+  manifest: Record<string, any>;
+  as_of_date?: string | null;
+  point_in_time_status: string;
+  calendar_version?: string | null;
+  adjustment_policy_version?: string | null;
+  is_frozen: boolean;
+  total_bars_count: number;
+  bar_count?: number;
+  total_actions_count: number;
+  created_at: string;
+}
+
+export interface DatasetSnapshotVerifyResponse {
+  snapshot_id: string;
+  is_verified: boolean;
+  manifest_sha256: string;
+  expected_hash?: string;
+  computed_hash?: string;
+  message: string;
+  verified_at?: string;
+}
+
 export interface AssetMetadata {
   asset_id: string;
   ticker: string;
@@ -408,6 +448,8 @@ export interface BacktestRequest {
   as_of_date?: string | null;
   strict_pit?: boolean;
   adjustment_type?: "total" | "price";
+  snapshot_id?: string | null;
+  auto_snapshot?: boolean;
 }
 
 
@@ -482,6 +524,8 @@ export interface BacktestResponse {
   rebalance_events: RebalanceEvent[];
   warnings: string[];
   point_in_time_metadata?: Record<string, any> | null;
+  snapshot_id?: string | null;
+  snapshot_provenance?: Record<string, any> | null;
 }
 
 
@@ -500,6 +544,7 @@ export interface BacktestListItem {
   max_drawdown_net: number;
   status: string;
   created_at: string;
+  snapshot_id?: string | null;
 }
 
 export type ScenarioType = 'custom_asset_shock' | 'historical_window' | 'covariance_stress';
@@ -913,6 +958,7 @@ export interface ExperimentRunResponse {
   risk_simulation_id?: string | null;
   summary_kpis?: Record<string, any> | null;
   error_message?: string | null;
+  snapshot_id?: string | null;
   is_reproducible: boolean;
   reproducibility_notes: string[];
   created_at: string;
@@ -926,6 +972,7 @@ export interface ExperimentRunListItem {
   status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   config_fingerprint: string;
   execution_duration_ms?: number | null;
+  snapshot_id?: string | null;
   is_reproducible: boolean;
   created_at: string;
   completed_at?: string | null;
