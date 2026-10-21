@@ -108,6 +108,12 @@ class DatasetModel(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
+    snapshots = relationship(
+        "DatasetSnapshotModel",
+        back_populates="dataset",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
 
     def get_errors(self) -> list[dict[str, Any]]:
         if not self.errors_json:
@@ -242,6 +248,62 @@ class CorporateActionModel(Base):
     )
 
 
+class DatasetSnapshotModel(Base):
+    """
+    Persistent immutable snapshot record binding a dataset's observations,
+    corporate actions, point-in-time status, and policies to a cryptographic manifest.
+    """
+
+    __tablename__ = "dataset_snapshots"
+
+    id = Column(String(36), primary_key=True, index=True)
+    dataset_id = Column(
+        String(36),
+        ForeignKey("datasets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        String(36),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    tag = Column(String(100), nullable=True, index=True)  # e.g. "baseline_2024_q1"
+    description = Column(Text, nullable=True)
+    snapshot_type = Column(String(30), default="manual", nullable=False)  # "manual", "auto_backtest", "auto_experiment"
+    manifest_sha256 = Column(String(64), nullable=False, index=True)
+    manifest_json = Column(Text, nullable=False)
+    as_of_date = Column(Date, nullable=True)
+    point_in_time_status = Column(String(50), default="unverified_legacy", nullable=False)
+    calendar_version = Column(String(50), nullable=True)
+    adjustment_policy_version = Column(String(50), nullable=True)
+    is_frozen = Column(Boolean, default=True, nullable=False)
+    total_bars_count = Column(Integer, nullable=False, default=0)
+    total_actions_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    dataset = relationship("DatasetModel", back_populates="snapshots")
+    user = relationship("UserModel", backref="dataset_snapshots")
+
+    __table_args__ = (
+        Index("ix_dataset_snapshots_dataset_tag", "dataset_id", "tag"),
+        Index("ix_dataset_snapshots_created_at", "created_at"),
+    )
+
+    def get_manifest(self) -> dict[str, Any]:
+        if not self.manifest_json:
+            return {}
+        try:
+            return json.loads(self.manifest_json)
+        except Exception:
+            return {}
+
+
 class BacktestRunModel(Base):
     """
     Persistent record of an executed portfolio strategy backtest simulation.
@@ -260,6 +322,12 @@ class BacktestRunModel(Base):
         String(36),
         ForeignKey("datasets.id", ondelete="CASCADE"),
         nullable=False,
+        index=True,
+    )
+    snapshot_id = Column(
+        String(36),
+        ForeignKey("dataset_snapshots.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     name = Column(String(150), nullable=False)
@@ -284,6 +352,7 @@ class BacktestRunModel(Base):
 
     user = relationship("UserModel", backref="backtest_runs")
     dataset = relationship("DatasetModel", backref="backtest_runs")
+    snapshot = relationship("DatasetSnapshotModel", backref="backtest_runs")
 
     def get_strategy_config(self) -> dict[str, Any]:
         if not self.strategy_config_json:
@@ -635,6 +704,12 @@ class ResearchExperimentRunModel(Base):
     run_number = Column(Integer, nullable=False, default=1)
     status = Column(String(30), nullable=False, default="pending")
     dataset_version_hash = Column(String(64), nullable=True)
+    snapshot_id = Column(
+        String(36),
+        ForeignKey("dataset_snapshots.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     config_fingerprint = Column(String(64), nullable=False)
     execution_duration_ms = Column(Integer, nullable=True)
     backtest_id = Column(
@@ -669,6 +744,7 @@ class ResearchExperimentRunModel(Base):
     backtest = relationship("BacktestRunModel", backref="research_experiment_runs")
     performance_report = relationship("PerformanceReportModel", backref="research_experiment_runs")
     risk_simulation = relationship("RiskSimulationRunModel", backref="research_experiment_runs")
+    snapshot = relationship("DatasetSnapshotModel", backref="research_experiment_runs")
 
     def get_summary_kpis(self) -> dict[str, Any]:
         if not self.summary_kpis_json:

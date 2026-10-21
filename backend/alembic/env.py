@@ -60,8 +60,8 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
-    from app.db.session import engine
-    connectable = engine
+    from app.db.session import create_db_engine
+    connectable = create_db_engine()
 
     with connectable.connect() as connection:
         context.configure(
