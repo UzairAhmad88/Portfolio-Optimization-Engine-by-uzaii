@@ -185,3 +185,11 @@ def test_calendar_factory():
 
     with pytest.raises(ValueError, match="Unsupported market"):
         get_calendar("LSE")
+
+
+def test_psx_calendar_lunar_coverage_range_contract():
+    cal = PSXCalendar()
+    assert cal.LUNAR_COVERAGE_START_YEAR == 2020
+    assert cal.LUNAR_COVERAGE_END_YEAR == 2026
+    assert cal.LUNAR_COVERAGE_RANGE == (2020, 2026)
+    assert "DEF-31-02" in (cal.__doc__ or "")

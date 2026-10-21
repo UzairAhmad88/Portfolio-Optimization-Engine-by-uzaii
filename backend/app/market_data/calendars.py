@@ -260,7 +260,19 @@ class PSXCalendar(ExchangeCalendar):
       * Ashura (9th & 10th Muharram, 2 days).
       * Eid Milad-un-Nabi (12th Rabi-ul-Awal, 1 day).
       * Shab-e-Barat / Ramadan start (where gazetted by PSX notices).
+
+    Coverage Boundary & Gazette Dependency (DEF-31-02):
+      Islamic lunar calendar dates in Pakistan depend on authoritative physical
+      moon-sighting determinations by the Central Ruet-e-Hilal Committee and official
+      annual gazetted notifications by the Government of Pakistan / PSX.
+      Authoritative gazetted holiday closures are provided for 2020 through 2026.
+      For trading sessions outside 2020–2026, fixed statutory holidays and weekends are
+      accurately enforced, while lunar holiday closures require annual gazette updates.
     """
+
+    LUNAR_COVERAGE_START_YEAR: int = 2020
+    LUNAR_COVERAGE_END_YEAR: int = 2026
+    LUNAR_COVERAGE_RANGE: tuple[int, int] = (2020, 2026)
 
     FIXED_HOLIDAYS: dict[tuple[int, int], str] = {
         (1, 1): "Bank Holiday (New Year Closing)",
