@@ -355,16 +355,22 @@ def run_combinatorial_cross_validation(
         for idx in sampled_indices
     ]
 
-    # Rank Distribution Histogram (10 standard decile bins across [0.0, 1.0])
+    # Rank Distribution Histogram (10 standard decile bins partitioning [0.0, 1.0])
+    # Consistent with inclusive PBO (omega_c <= 0.5):
+    # - Bins 0..3: [bin_start, bin_end)
+    # - Bin 4: [0.4, 0.5] (inclusive of 0.5 median boundary)
+    # - Bins 5..9: (bin_start, bin_end] (strictly > 0.5, persistent region)
     bin_edges = np.linspace(0.0, 1.0, 11)
     hist_bins: list[CSCVHistogramBin] = []
     for b_idx in range(10):
         b_start = float(bin_edges[b_idx])
         b_end = float(bin_edges[b_idx + 1])
-        if b_idx == 9:
+        if b_idx < 4:
+            in_bin = (rel_ranks >= b_start) & (rel_ranks < b_end)
+        elif b_idx == 4:
             in_bin = (rel_ranks >= b_start) & (rel_ranks <= b_end)
         else:
-            in_bin = (rel_ranks >= b_start) & (rel_ranks < b_end)
+            in_bin = (rel_ranks > b_start) & (rel_ranks <= b_end)
         b_count = int(np.sum(in_bin))
         hist_bins.append(
             CSCVHistogramBin(

@@ -1,7 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import { OverfittingDiagnosticsStudio } from '../components/research/OverfittingDiagnosticsStudio';
+import {
+  OverfittingDiagnosticsStudio,
+  formatCscvSamplingDisclosure,
+  escapeCsvField,
+  toCsvRow,
+  formatHistogramBinRange,
+  generateDiagnosticsCsv,
+} from '../components/research/OverfittingDiagnosticsStudio';
 import { apiClient } from '../api/client';
 import type {
   ExperimentListItem,
@@ -536,4 +543,218 @@ describe('OverfittingDiagnosticsStudio & Overfitting API', () => {
     expect(navigator.clipboard.writeText).toHaveBeenCalledTimes(1);
     expect((navigator.clipboard.writeText as any).mock.calls[0][0]).toContain('### Institutional Research Tear Sheet');
   });
+
+  /* ========================================================================= */
+  /* DEF-E-01 Regression Tests: Histogram Boundaries & PBO Consistency         */
+  /* ========================================================================= */
+  describe('DEF-E-01: PBO Histogram Boundary Interval Notation', () => {
+    it('formats bin ranges with mathematically consistent interval boundaries', () => {
+      // Bins < 0.5: left-closed, right-open [start, end)
+      expect(formatHistogramBinRange({ bin_start: 0.0, bin_end: 0.1, count: 10, relative_frequency: 0.1 })).toBe('[0.00, 0.10)');
+      expect(formatHistogramBinRange({ bin_start: 0.1, bin_end: 0.2, count: 5, relative_frequency: 0.05 })).toBe('[0.10, 0.20)');
+      expect(formatHistogramBinRange({ bin_start: 0.3, bin_end: 0.4, count: 8, relative_frequency: 0.08 })).toBe('[0.30, 0.40)');
+
+      // Median boundary bin (bin ending at 0.5): closed on both sides [0.40, 0.50]
+      expect(formatHistogramBinRange({ bin_start: 0.4, bin_end: 0.5, count: 12, relative_frequency: 0.12 })).toBe('[0.40, 0.50]');
+
+      // Bins > 0.5 (persistent region): left-open, right-closed (start, end]
+      expect(formatHistogramBinRange({ bin_start: 0.5, bin_end: 0.6, count: 15, relative_frequency: 0.15 })).toBe('(0.50, 0.60]');
+      expect(formatHistogramBinRange({ bin_start: 0.6, bin_end: 0.7, count: 20, relative_frequency: 0.20 })).toBe('(0.60, 0.70]');
+      expect(formatHistogramBinRange({ bin_start: 0.9, bin_end: 1.0, count: 25, relative_frequency: 0.25 })).toBe('(0.90, 1.00]');
+    });
+
+    it('renders accurate boundary interval notation in the accessible data table', async () => {
+      vi.spyOn(apiClient, 'listExperimentRuns').mockResolvedValue(mockRuns);
+      vi.spyOn(apiClient, 'computeOverfittingDiagnostics').mockResolvedValueOnce(mockDiagnosticsResponse);
+
+      render(
+        <OverfittingDiagnosticsStudio
+          experiments={mockExperiments}
+          initialExperimentId="exp-momentum-alpha"
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Compute Overfitting Diagnostics/i })).toBeEnabled();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /Compute Overfitting Diagnostics/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/Out-of-Sample Relative-Rank Distribution/i)).toBeInTheDocument();
+      });
+
+      // Switch to histogram data table
+      const dataTableButtons = screen.getAllByRole('button', { name: /Show Data Table/i });
+      fireEvent.click(dataTableButtons[1]); // second one is for histogram
+
+      expect(screen.getByText('[0.00, 0.10)')).toBeInTheDocument();
+      expect(screen.getByText('[0.40, 0.50]')).toBeInTheDocument();
+      expect(screen.getByText('(0.50, 0.60]')).toBeInTheDocument();
+      expect(screen.getByText('(0.90, 1.00]')).toBeInTheDocument();
+    });
+  });
+
+  /* ========================================================================= */
+  /* DEF-E-02 Regression Tests: CSCV Subsampling Disclosure                    */
+  /* ========================================================================= */
+  describe('DEF-E-02: CSCV Scatter Subsampling Disclosure', () => {
+    it('accurately distinguishes sampled points from total combinations count', () => {
+      // Subsampled case
+      expect(formatCscvSamplingDisclosure(500, 12870)).toBe('500 sampled points of 12,870 total CSCV combinations');
+
+      // Complete partition case (no subsampling)
+      expect(formatCscvSamplingDisclosure(70, 70)).toBe('70 total CSCV combinations (complete partition)');
+
+      // Missing or undefined total count metadata
+      expect(formatCscvSamplingDisclosure(500, null)).toBe('500 CSCV combinations');
+      expect(formatCscvSamplingDisclosure(500, undefined)).toBe('500 CSCV combinations');
+    });
+
+    it('displays sampled-vs-total disclosure in the scatter plot header', async () => {
+      vi.spyOn(apiClient, 'listExperimentRuns').mockResolvedValue(mockRuns);
+      vi.spyOn(apiClient, 'computeOverfittingDiagnostics').mockResolvedValueOnce(mockDiagnosticsResponse);
+
+      render(
+        <OverfittingDiagnosticsStudio
+          experiments={mockExperiments}
+          initialExperimentId="exp-momentum-alpha"
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Compute Overfitting Diagnostics/i })).toBeEnabled();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /Compute Overfitting Diagnostics/i }));
+
+      await waitFor(() => {
+        // mockDiagnosticsResponse has 2 sample points and total_combinations_count: 12870
+        expect(screen.getByText(/2 sampled points of 12,870 total CSCV combinations/i)).toBeInTheDocument();
+      });
+    });
+  });
+
+  /* ========================================================================= */
+  /* DEF-E-03 Regression Tests: RFC 4180 CSV Escaping & Warning Preservation    */
+  /* ========================================================================= */
+  describe('DEF-E-03: CSV Escaping & Advisory Warnings Preservation', () => {
+    it('escapes fields containing commas, double quotes, and newlines correctly', () => {
+      expect(escapeCsvField('StandardName')).toBe('StandardName');
+      expect(escapeCsvField(123.45)).toBe('123.45');
+      expect(escapeCsvField(null)).toBe('');
+      expect(escapeCsvField(undefined)).toBe('');
+
+      // Comma escaping
+      expect(escapeCsvField('Alpha, Beta & Gamma')).toBe('"Alpha, Beta & Gamma"');
+
+      // Embedded double quotes (RFC 4180: double each quote)
+      expect(escapeCsvField('Strategy "Beta" 2.0')).toBe('"Strategy ""Beta"" 2.0"');
+
+      // Newlines
+      expect(escapeCsvField('Line 1\nLine 2')).toBe('"Line 1\nLine 2"');
+      expect(escapeCsvField('Line 1\r\nLine 2')).toBe('"Line 1\r\nLine 2"');
+    });
+
+    it('formats a CSV row with proper escaping across mixed field types', () => {
+      const row = toCsvRow(['Exp1', 'Momentum, Value', 1.82, 'Notes with "quotes"']);
+      expect(row).toBe('Exp1,"Momentum, Value",1.82,"Notes with ""quotes"""');
+    });
+
+    it('generates self-contained CSV preserving metadata, provenance, and warnings', () => {
+      const diagnosticsWithEscapes: OverfittingDiagnosticsResponse = {
+        ...mockDiagnosticsResponse,
+        experiment_name: 'Alpha, Trend & Momentum "Core"',
+        min_backtest_length_years: null,
+        warnings: [
+          'First warning: data trimmed by 5 days.',
+          'Second warning with "quoted detail", comma included.',
+        ],
+      };
+
+      const csv = generateDiagnosticsCsv(diagnosticsWithEscapes);
+
+      // Verify header and experiment name escaping
+      expect(csv).toContain('Experiment Name,"Alpha, Trend & Momentum ""Core"""');
+
+      // Verify null MinBTL is preserved as 'Undefined', not coerced to zero
+      expect(csv).toContain('MinBTL (Years),Undefined');
+
+      // Verify advisory warnings section
+      expect(csv).toContain('--- ADVISORY WARNINGS ---');
+      expect(csv).toContain('Warning Index,Warning Message');
+      expect(csv).toContain('1,First warning: data trimmed by 5 days.');
+      expect(csv).toContain('2,"Second warning with ""quoted detail"", comma included."');
+
+      // Verify run-level summary table is preserved
+      expect(csv).toContain('--- RUN-LEVEL SUMMARY TABLE ---');
+      expect(csv).toContain('Run Number,Run ID,Nominal Sharpe,IS Selection Frequency,Mean OOS Sharpe,Mean OOS Relative Rank');
+
+      // Verify CSCV combinations sample is preserved
+      expect(csv).toContain('--- CSCV COMBINATIONS SAMPLE ---');
+    });
+
+    it('handles diagnostics without warnings cleanly in CSV export', () => {
+      const diagnosticsWithoutWarnings: OverfittingDiagnosticsResponse = {
+        ...mockDiagnosticsResponse,
+        warnings: [],
+      };
+
+      const csv = generateDiagnosticsCsv(diagnosticsWithoutWarnings);
+      expect(csv).toContain('--- ADVISORY WARNINGS ---');
+      expect(csv).toContain('Status,No advisory warnings detected.');
+    });
+  });
+
+  /* ========================================================================= */
+  /* DEF-E-04 Regression Tests: SVG Plot Area Clipping                         */
+  /* ========================================================================= */
+  describe('DEF-E-04: SVG Scatter Plot Area Clipping', () => {
+    it('renders a scoped clipPath element and wraps plotted elements in a clipped group', async () => {
+      vi.spyOn(apiClient, 'listExperimentRuns').mockResolvedValue(mockRuns);
+      vi.spyOn(apiClient, 'computeOverfittingDiagnostics').mockResolvedValueOnce(mockDiagnosticsResponse);
+
+      const { container } = render(
+        <OverfittingDiagnosticsStudio
+          experiments={mockExperiments}
+          initialExperimentId="exp-momentum-alpha"
+        />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: /Compute Overfitting Diagnostics/i })).toBeEnabled();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: /Compute Overfitting Diagnostics/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText(/In-Sample vs Out-of-Sample Sharpe Degradation/i)).toBeInTheDocument();
+      });
+
+      // Find Scatter SVG element in container
+      const svg = container.querySelector('svg[data-testid="cscv-scatter-chart"]');
+      expect(svg).toBeInTheDocument();
+
+      // Check for <clipPath> with a valid ID
+      const clipPath = svg?.querySelector('clipPath, clippath');
+      expect(clipPath).toBeInTheDocument();
+      const clipId = clipPath?.getAttribute('id');
+      expect(clipId).toBeTruthy();
+
+      // Check that a group uses this clipPath
+      const clippedGroup = svg?.querySelector(`g[clip-path="url(#${clipId})"], g[clipPath="url(#${clipId})"]`);
+      expect(clippedGroup).toBeInTheDocument();
+
+      // Ensure points and lines are inside the clipped group
+      const circles = clippedGroup?.querySelectorAll('circle');
+      expect(circles && circles.length).toBeGreaterThan(0);
+
+      // Ensure axis labels are OUTSIDE the clipped group
+      const texts = svg?.querySelectorAll('text');
+      const axisText = Array.from(texts || []).find((t) => t.textContent?.includes('In-Sample Sharpe Ratio'));
+      expect(axisText).toBeInTheDocument();
+      expect(clippedGroup?.contains(axisText!)).toBe(false);
+    });
+  });
 });
+

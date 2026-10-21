@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useId } from 'react';
 import {
   Activity,
   AlertTriangle,
@@ -24,6 +24,151 @@ import type {
   CSCVHistogramBin,
   RunOverfittingSummary,
 } from '../../types/api';
+
+/**
+ * Format CSCV subsampling disclosure distinguishing plotted sample points
+ * from complete combinatorial partition count (DEF-E-02).
+ */
+export function formatCscvSamplingDisclosure(
+  sampleCount: number,
+  totalCount?: number | null
+): string {
+  if (totalCount != null && totalCount > sampleCount) {
+    return `${sampleCount.toLocaleString()} sampled points of ${totalCount.toLocaleString()} total CSCV combinations`;
+  }
+  if (totalCount != null && totalCount <= sampleCount) {
+    return `${totalCount.toLocaleString()} total CSCV combinations (complete partition)`;
+  }
+  return `${sampleCount.toLocaleString()} CSCV combinations`;
+}
+
+/**
+ * Escape a CSV field according to RFC 4180 standard (DEF-E-03).
+ */
+export function escapeCsvField(value: unknown): string {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  const str = String(value);
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
+/**
+ * Format a row of CSV fields.
+ */
+export function toCsvRow(fields: unknown[]): string {
+  return fields.map(escapeCsvField).join(',');
+}
+
+/**
+ * Format histogram bin range with mathematically consistent interval notation (DEF-E-01).
+ * Bins <= 0.5: [start, end) except bin ending at 0.5 which is [0.40, 0.50].
+ * Bins > 0.5: (start, end].
+ */
+export function formatHistogramBinRange(bin: CSCVHistogramBin): string {
+  if (bin.bin_end < 0.5) {
+    return `[${bin.bin_start.toFixed(2)}, ${bin.bin_end.toFixed(2)})`;
+  }
+  if (bin.bin_end === 0.5) {
+    return `[${bin.bin_start.toFixed(2)}, ${bin.bin_end.toFixed(2)}]`;
+  }
+  return `(${bin.bin_start.toFixed(2)}, ${bin.bin_end.toFixed(2)}]`;
+}
+
+/**
+ * Generate comprehensive CSV export string with RFC 4180 escaping and advisory warnings (DEF-E-03).
+ */
+export function generateDiagnosticsCsv(diagnosticsResult: OverfittingDiagnosticsResponse): string {
+  const lines: string[] = [];
+  lines.push('--- RESEARCH EXPERIMENT OVERFITTING DIAGNOSTICS REPORT ---');
+  lines.push(toCsvRow(['Experiment ID', diagnosticsResult.experiment_id]));
+  lines.push(toCsvRow(['Experiment Name', diagnosticsResult.experiment_name]));
+  lines.push(toCsvRow(['Strategy Type', diagnosticsResult.strategy_type]));
+  lines.push(toCsvRow(['Dataset ID', diagnosticsResult.dataset_id]));
+  lines.push(toCsvRow(['Snapshot ID', diagnosticsResult.snapshot_id ?? 'None']));
+  lines.push(toCsvRow(['Generated At', diagnosticsResult.generated_at]));
+  lines.push(toCsvRow(['Evaluated Runs Count', diagnosticsResult.evaluated_runs_count]));
+  lines.push(toCsvRow(['Aligned Daily Observations', diagnosticsResult.aligned_observations_count]));
+  lines.push(toCsvRow(['CSCV Slices', diagnosticsResult.n_slices]));
+  lines.push(toCsvRow(['Combinatorial Splits', diagnosticsResult.total_combinations_count]));
+  lines.push(toCsvRow(['PBO', diagnosticsResult.pbo]));
+  lines.push(toCsvRow(['PBO Risk Level', diagnosticsResult.pbo_risk_level]));
+  lines.push(toCsvRow(['Deflated Sharpe Ratio', diagnosticsResult.deflated_sharpe_ratio]));
+  lines.push(toCsvRow(['Is Statistically Significant', diagnosticsResult.is_statistically_significant]));
+  lines.push(toCsvRow(['Best Nominal Sharpe', diagnosticsResult.best_nominal_sharpe]));
+  lines.push(toCsvRow(['Expected Max Sharpe (SR*)', diagnosticsResult.expected_max_sharpe]));
+  lines.push(toCsvRow(['MinBTL (Years)', diagnosticsResult.min_backtest_length_years ?? 'Undefined']));
+  lines.push(toCsvRow(['Actual Track Record (Years)', diagnosticsResult.actual_backtest_length_years]));
+  lines.push(toCsvRow(['Skewness', diagnosticsResult.skewness]));
+  lines.push(toCsvRow(['Kurtosis', diagnosticsResult.kurtosis]));
+  lines.push(toCsvRow(['Degradation Slope Beta', diagnosticsResult.degradation_regression.slope]));
+  lines.push(toCsvRow(['Degradation Intercept Alpha', diagnosticsResult.degradation_regression.intercept]));
+  lines.push(toCsvRow(['Degradation R2', diagnosticsResult.degradation_regression.r_squared]));
+
+  // Advisory Warnings Section
+  lines.push('');
+  lines.push('--- ADVISORY WARNINGS ---');
+  if (diagnosticsResult.warnings && diagnosticsResult.warnings.length > 0) {
+    lines.push(toCsvRow(['Warning Index', 'Warning Message']));
+    diagnosticsResult.warnings.forEach((warn, idx) => {
+      lines.push(toCsvRow([idx + 1, warn]));
+    });
+  } else {
+    lines.push(toCsvRow(['Status', 'No advisory warnings detected.']));
+  }
+
+  // Run-level Summary
+  lines.push('');
+  lines.push('--- RUN-LEVEL SUMMARY TABLE ---');
+  lines.push(toCsvRow([
+    'Run Number',
+    'Run ID',
+    'Nominal Sharpe',
+    'IS Selection Frequency',
+    'Mean OOS Sharpe',
+    'Mean OOS Relative Rank',
+  ]));
+  for (const r of diagnosticsResult.runs_summary) {
+    lines.push(toCsvRow([
+      r.run_number,
+      r.run_id,
+      r.nominal_sharpe.toFixed(4),
+      `${(r.selection_frequency_is * 100).toFixed(2)}%`,
+      r.mean_oos_sharpe_when_selected != null ? r.mean_oos_sharpe_when_selected.toFixed(4) : 'N/A',
+      r.mean_oos_rank_when_selected != null ? r.mean_oos_rank_when_selected.toFixed(4) : 'N/A',
+    ]));
+  }
+
+  // Combinations Sample
+  lines.push('');
+  lines.push('--- CSCV COMBINATIONS SAMPLE ---');
+  lines.push(toCsvRow([
+    'Combination ID',
+    'Selected Run ID',
+    'IS Sharpe',
+    'OOS Sharpe',
+    'OOS Rank',
+    'Relative Rank',
+    'Is Overfitted',
+  ]));
+  for (const pt of diagnosticsResult.combinations_sample) {
+    lines.push(toCsvRow([
+      pt.combination_id,
+      pt.selected_run_id,
+      pt.is_sharpe.toFixed(4),
+      pt.oos_sharpe.toFixed(4),
+      pt.oos_rank,
+      pt.relative_rank.toFixed(4),
+      pt.is_overfitted,
+    ]));
+  }
+
+  return lines.join('\n');
+}
+
 
 interface OverfittingDiagnosticsStudioProps {
   experiments: ExperimentListItem[];
@@ -258,46 +403,7 @@ export const OverfittingDiagnosticsStudio: React.FC<OverfittingDiagnosticsStudio
 
   const handleExportCsv = () => {
     if (!diagnosticsResult) return;
-    const lines: string[] = [];
-    lines.push('--- RESEARCH EXPERIMENT OVERFITTING DIAGNOSTICS REPORT ---');
-    lines.push(`Experiment ID,${diagnosticsResult.experiment_id}`);
-    lines.push(`Experiment Name,${diagnosticsResult.experiment_name}`);
-    lines.push(`Generated At,${diagnosticsResult.generated_at}`);
-    lines.push(`Evaluated Runs Count,${diagnosticsResult.evaluated_runs_count}`);
-    lines.push(`Aligned Daily Observations,${diagnosticsResult.aligned_observations_count}`);
-    lines.push(`CSCV Slices,${diagnosticsResult.n_slices}`);
-    lines.push(`Combinatorial Splits,${diagnosticsResult.total_combinations_count}`);
-    lines.push(`PBO,${diagnosticsResult.pbo}`);
-    lines.push(`PBO Risk Level,${diagnosticsResult.pbo_risk_level}`);
-    lines.push(`Deflated Sharpe Ratio,${diagnosticsResult.deflated_sharpe_ratio}`);
-    lines.push(`Is Statistically Significant,${diagnosticsResult.is_statistically_significant}`);
-    lines.push(`Best Nominal Sharpe,${diagnosticsResult.best_nominal_sharpe}`);
-    lines.push(`Expected Max Sharpe (SR*),${diagnosticsResult.expected_max_sharpe}`);
-    lines.push(`MinBTL (Years),${diagnosticsResult.min_backtest_length_years ?? 'Undefined'}`);
-    lines.push(`Actual Track Record (Years),${diagnosticsResult.actual_backtest_length_years}`);
-    lines.push(`Degradation Slope Beta,${diagnosticsResult.degradation_regression.slope}`);
-    lines.push(`Degradation Intercept Alpha,${diagnosticsResult.degradation_regression.intercept}`);
-    lines.push(`Degradation R2,${diagnosticsResult.degradation_regression.r_squared}`);
-    lines.push('');
-    lines.push('--- RUN-LEVEL SUMMARY TABLE ---');
-    lines.push('Run Number,Run ID,Nominal Sharpe,IS Selection Frequency,Mean OOS Sharpe,Mean OOS Relative Rank');
-    for (const r of diagnosticsResult.runs_summary) {
-      lines.push(
-        `${r.run_number},${r.run_id},${r.nominal_sharpe.toFixed(4)},${(r.selection_frequency_is * 100).toFixed(2)}%,${
-          r.mean_oos_sharpe_when_selected != null ? r.mean_oos_sharpe_when_selected.toFixed(4) : 'N/A'
-        },${r.mean_oos_rank_when_selected != null ? r.mean_oos_rank_when_selected.toFixed(4) : 'N/A'}`
-      );
-    }
-    lines.push('');
-    lines.push('--- CSCV COMBINATIONS SAMPLE ---');
-    lines.push('Combination ID,Selected Run ID,IS Sharpe,OOS Sharpe,OOS Rank,Relative Rank,Is Overfitted');
-    for (const pt of diagnosticsResult.combinations_sample) {
-      lines.push(
-        `${pt.combination_id},${pt.selected_run_id},${pt.is_sharpe.toFixed(4)},${pt.oos_sharpe.toFixed(4)},${pt.oos_rank},${pt.relative_rank.toFixed(4)},${pt.is_overfitted}`
-      );
-    }
-
-    const csvContent = 'data:text/csv;charset=utf-8,' + encodeURIComponent(lines.join('\n'));
+    const csvContent = 'data:text/csv;charset=utf-8,' + encodeURIComponent(generateDiagnosticsCsv(diagnosticsResult));
     const dlAnchor = document.createElement('a');
     dlAnchor.setAttribute('href', csvContent);
     dlAnchor.setAttribute('download', `overfitting_diagnostics_${diagnosticsResult.experiment_id}.csv`);
@@ -931,7 +1037,7 @@ export const OverfittingDiagnosticsStudio: React.FC<OverfittingDiagnosticsStudio
                     In-Sample vs Out-of-Sample Sharpe Degradation
                   </h4>
                   <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    {diagnosticsResult.combinations_sample.length} CSCV combinations • Red = Overfitted (&le; Median) • Green = Persistent
+                    {formatCscvSamplingDisclosure(diagnosticsResult.combinations_sample.length, diagnosticsResult.total_combinations_count)} • Red = Overfitted (&le; Median) • Green = Persistent
                   </div>
                 </div>
                 <button
@@ -1092,7 +1198,7 @@ export const OverfittingDiagnosticsStudio: React.FC<OverfittingDiagnosticsStudio
                     {hoveredBin ? (
                       <>
                         <div>
-                          Rank Range: <strong>[{hoveredBin.bin_start.toFixed(2)} - {hoveredBin.bin_end.toFixed(2)}]</strong> •{' '}
+                          Rank Range: <strong>{formatHistogramBinRange(hoveredBin)}</strong> •{' '}
                           Count: <strong>{hoveredBin.count.toLocaleString()}</strong> splits (
                           {(hoveredBin.relative_frequency * 100).toFixed(1)}%)
                         </div>
@@ -1126,7 +1232,7 @@ export const OverfittingDiagnosticsStudio: React.FC<OverfittingDiagnosticsStudio
                       {diagnosticsResult.rank_distribution.map((bin, idx) => (
                         <tr key={idx}>
                           <td className="font-mono">
-                            [{bin.bin_start.toFixed(2)}, {bin.bin_end.toFixed(2)}]
+                            {formatHistogramBinRange(bin)}
                           </td>
                           <td className="font-mono">{bin.count.toLocaleString()}</td>
                           <td className="font-mono">{(bin.relative_frequency * 100).toFixed(2)}%</td>
@@ -1315,6 +1421,7 @@ const CSCVScatterChart: React.FC<CSCVScatterChartProps> = ({
   hoveredPoint,
   onHoverPoint,
 }) => {
+  const clipId = useId();
   const width = 600;
   const height = 300;
   const padding = { top: 20, right: 30, bottom: 40, left: 50 };
@@ -1364,9 +1471,21 @@ const CSCVScatterChart: React.FC<CSCVScatterChartProps> = ({
 
   return (
     <svg
+      data-testid="cscv-scatter-chart"
       viewBox={`0 0 ${width} ${height}`}
       style={{ width: '100%', height: 'auto', display: 'block', overflow: 'visible' }}
     >
+      <defs>
+        <clipPath id={clipId}>
+          <rect
+            x={padding.left}
+            y={padding.top}
+            width={width - padding.left - padding.right}
+            height={height - padding.top - padding.bottom}
+          />
+        </clipPath>
+      </defs>
+
       {/* Background & Grid */}
       <rect
         x={padding.left}
@@ -1377,76 +1496,79 @@ const CSCVScatterChart: React.FC<CSCVScatterChartProps> = ({
         stroke="var(--border-subtle)"
       />
 
-      {/* Zero lines if in range */}
-      {xMin < 0 && xMax > 0 && (
-        <line
-          x1={scaleX(0)}
-          y1={padding.top}
-          x2={scaleX(0)}
-          y2={height - padding.bottom}
-          stroke="var(--border-medium)"
-          strokeWidth="1"
-          strokeDasharray="3 3"
-        />
-      )}
-      {yMin < 0 && yMax > 0 && (
-        <line
-          x1={padding.left}
-          y1={scaleY(0)}
-          x2={width - padding.right}
-          y2={scaleY(0)}
-          stroke="var(--border-medium)"
-          strokeWidth="1"
-          strokeDasharray="3 3"
-        />
-      )}
-
-      {/* 1:1 Parity Line (Zero Degradation) */}
-      {parityStartVal < parityEndVal && (
-        <line
-          x1={scaleX(parityStartVal)}
-          y1={scaleY(parityStartVal)}
-          x2={scaleX(parityEndVal)}
-          y2={scaleY(parityEndVal)}
-          stroke="var(--text-dim)"
-          strokeWidth="1.5"
-          strokeDasharray="4 4"
-        />
-      )}
-
-      {/* OLS Degradation Line */}
-      <line
-        x1={scaleX(xMin)}
-        y1={scaleY(regYStart)}
-        x2={scaleX(xMax)}
-        y2={scaleY(regYEnd)}
-        stroke="var(--accent)"
-        strokeWidth="2"
-      />
-
-      {/* Scatter Points */}
-      {points.map((pt) => {
-        const cx = scaleX(pt.is_sharpe);
-        const cy = scaleY(pt.oos_sharpe);
-        const isHovered = hoveredPoint?.combination_id === pt.combination_id;
-        const color = pt.is_overfitted ? 'var(--danger)' : 'var(--success)';
-
-        return (
-          <circle
-            key={pt.combination_id}
-            cx={cx}
-            cy={cy}
-            r={isHovered ? 6 : 3.5}
-            fill={color}
-            opacity={isHovered ? 1.0 : 0.75}
-            stroke={isHovered ? '#fff' : 'none'}
-            strokeWidth={isHovered ? 1.5 : 0}
-            style={{ cursor: 'pointer', transition: 'r 0.1s ease' }}
-            onMouseEnter={() => onHoverPoint(pt)}
-            onMouseLeave={() => onHoverPoint(null)}
+      {/* Clipped Plot Area: lines and points constrained to plot area (DEF-E-04) */}
+      <g clipPath={`url(#${clipId})`}>
+        {/* Zero lines if in range */}
+        {xMin < 0 && xMax > 0 && (
+          <line
+            x1={scaleX(0)}
+            y1={padding.top}
+            x2={scaleX(0)}
+            y2={height - padding.bottom}
+            stroke="var(--border-medium)"
+            strokeWidth="1"
+            strokeDasharray="3 3"
           />
-        );
-      })}
+        )}
+        {yMin < 0 && yMax > 0 && (
+          <line
+            x1={padding.left}
+            y1={scaleY(0)}
+            x2={width - padding.right}
+            y2={scaleY(0)}
+            stroke="var(--border-medium)"
+            strokeWidth="1"
+            strokeDasharray="3 3"
+          />
+        )}
+
+        {/* 1:1 Parity Line (Zero Degradation) */}
+        {parityStartVal < parityEndVal && (
+          <line
+            x1={scaleX(parityStartVal)}
+            y1={scaleY(parityStartVal)}
+            x2={scaleX(parityEndVal)}
+            y2={scaleY(parityEndVal)}
+            stroke="var(--text-dim)"
+            strokeWidth="1.5"
+            strokeDasharray="4 4"
+          />
+        )}
+
+        {/* OLS Degradation Line */}
+        <line
+          x1={scaleX(xMin)}
+          y1={scaleY(regYStart)}
+          x2={scaleX(xMax)}
+          y2={scaleY(regYEnd)}
+          stroke="var(--accent)"
+          strokeWidth="2"
+        />
+
+        {/* Scatter Points */}
+        {points.map((pt) => {
+          const cx = scaleX(pt.is_sharpe);
+          const cy = scaleY(pt.oos_sharpe);
+          const isHovered = hoveredPoint?.combination_id === pt.combination_id;
+          const color = pt.is_overfitted ? 'var(--danger)' : 'var(--success)';
+
+          return (
+            <circle
+              key={pt.combination_id}
+              cx={cx}
+              cy={cy}
+              r={isHovered ? 6 : 3.5}
+              fill={color}
+              opacity={isHovered ? 1.0 : 0.75}
+              stroke={isHovered ? '#fff' : 'none'}
+              strokeWidth={isHovered ? 1.5 : 0}
+              style={{ cursor: 'pointer', transition: 'r 0.1s ease' }}
+              onMouseEnter={() => onHoverPoint(pt)}
+              onMouseLeave={() => onHoverPoint(null)}
+            />
+          );
+        })}
+      </g>
 
       {/* Axes & Ticks */}
       <line

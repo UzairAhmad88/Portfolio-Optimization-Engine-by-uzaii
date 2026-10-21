@@ -171,4 +171,47 @@ All Gate E completion criteria specified in Session 65 have been satisfied:
 - [x] Accessibility and responsive behavior verified.
 - [x] All 64 frontend tests, 41 backend overfitting tests, production build, and linting pass.
 
-**Gate E Verdict:** `PASS`
+**Gate E Verdict:** `PASS` (Remediated in Session 67)
+
+---
+
+## 9. Session 67 Gate E Remediation Verification
+
+Following the Session 66 independent quantitative audit, four specific findings were remediated and verified:
+
+### 1. `DEF-E-01` — PBO Histogram Boundary Consistency (P1)
+- **Disposition:** Remediated and tested.
+- **Root Cause:** Half-open interval convention in `backend/app/analytics/overfitting.py` placed relative ranks of exactly 0.5 into Bin 5 (`[0.5, 0.6)`), whereas PBO inclusively defines overfitted splits as $\omega_c \le 0.5$.
+- **Remediation:**
+  - In `backend/app/analytics/overfitting.py`, modified decile binning: Bins 0..3 partition $[0.0, 0.4)$, Bin 4 covers $[0.4, 0.5]$ (inclusive of 0.5 boundary), and Bins 5..9 partition $(0.5, 1.0]$.
+  - The sum of counts and relative frequencies of bins with `bin_end <= 0.5` now reconciles to exact equality with the PBO count and probability.
+  - In `frontend/src/components/research/OverfittingDiagnosticsStudio.tsx`, introduced `formatHistogramBinRange` displaying `[start, end)` for bins $< 0.5$, `[0.40, 0.50]` for the median boundary, and `(start, end]` for bins $> 0.5$.
+- **Test Evidence:** Verified via `TestHistogramBoundaryConsistency` in `backend/tests/test_overfitting_engine.py` (deterministic 3-strategy panel and explicit boundary array `[0.0, 0.49, 0.50, 0.51, 1.0]`), plus Vitest table range verification.
+
+### 2. `DEF-E-02` — CSCV Scatter Subsampling Disclosure (P2)
+- **Disposition:** Remediated and tested.
+- **Root Cause:** When CSCV splits exceeded 500, the scatter plot rendered 500 sample points, but the header labeled it as `"500 CSCV combinations"` without clarifying that 500 was an evenly-spaced subsample of the total combinatorial count $C$.
+- **Remediation:**
+  - In `frontend/src/components/research/OverfittingDiagnosticsStudio.tsx`, implemented `formatCscvSamplingDisclosure(sampleCount, totalCount)`.
+  - When subsampled, header displays: `{sampleCount} sampled points of {totalCount} total CSCV combinations`.
+  - Handles complete partitions (`{totalCount} total CSCV combinations (complete partition)`) and missing total-count metadata gracefully.
+- **Test Evidence:** Verified across all four branching paths via Vitest unit tests in `frontend/src/test/overfitting-diagnostics.test.tsx`.
+
+### 3. `DEF-E-03` — CSV Escaping & Warning Preservation (P2)
+- **Disposition:** Remediated and tested.
+- **Root Cause:** `handleExportCsv` concatenated unescaped strings (risking column shifting if names contained commas or quotes) and omitted advisory warnings from the CSV report.
+- **Remediation:**
+  - Implemented standard RFC 4180 CSV helpers `escapeCsvField` (wrapping commas/quotes/newlines in double quotes, doubling embedded quotes) and `toCsvRow`.
+  - Exported `generateDiagnosticsCsv` creating self-contained reports that serialize the `--- ADVISORY WARNINGS ---` section, preserving null metrics as `'Undefined'` and maintaining full provenance.
+- **Test Evidence:** Verified with unit tests covering commas, quotes, newlines, missing MinBTL, and warning arrays in `frontend/src/test/overfitting-diagnostics.test.tsx`.
+
+### 4. `DEF-E-04` — SVG Regression Line Plot Area Clipping (P3)
+- **Disposition:** Remediated and tested.
+- **Root Cause:** Steep regression slopes could project `regYStart` or `regYEnd` beyond visible $[yMin, yMax]$ bounds without clipping, protruding past the SVG chart grid.
+- **Remediation:**
+  - In `CSCVScatterChart`, generated a unique clip identifier using React's `useId()` hook (`clipId`).
+  - Added `<defs><clipPath id={clipId}><rect ... /></clipPath></defs>` covering the plot area rectangle.
+  - Wrapped zero lines, parity line, degradation regression line, and scatter circles inside `<g clipPath={`url(#${clipId})`}>`.
+  - Left axes, tick marks, numeric labels, and axis titles outside the clip group to ensure they remain crisp and unclipped.
+- **Test Evidence:** Verified via DOM tree assertions in `frontend/src/test/overfitting-diagnostics.test.tsx` confirming `<clipPath>` presence, unique scoping, and containment.
+

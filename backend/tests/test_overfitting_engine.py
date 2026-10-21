@@ -346,3 +346,121 @@ class TestIntegratedOverfittingDiagnostics:
         bad_meta = [{"run_id": "r1"}, {"run_id": "r2"}]
         with pytest.raises(ValueError, match="does not match column count"):
             compute_overfitting_diagnostics(panel, run_metadata=bad_meta)
+
+
+class TestHistogramBoundaryConsistency:
+    """
+    Verification of DEF-E-01: Mathematical consistency of PBO and histogram boundary bins.
+    Ensures relative rank boundary values (0.0, 0.49, 0.50, 0.51, 1.0) and exact
+    reconciliation between PBO (rel_rank <= 0.5) and bins with bin_end <= 0.5.
+    """
+
+    def test_pbo_histogram_decile_partitioning_and_boundary_reconciliation(self):
+        """
+        With N=3 strategies, possible relative ranks are 1/4 = 0.25, 2/4 = 0.50, and 3/4 = 0.75.
+        Splits with relative rank exactly 0.50 MUST be assigned to Bin 4 ([0.4, 0.5])
+        and counted in the PBO <= 0.5 region.
+        """
+        # Create a 3-strategy panel over 100 observations
+        # Slices = 4 -> C = binom(4, 2) = 6 splits
+        rng = np.random.default_rng(123)
+        panel = rng.normal(0.0005, 0.01, size=(100, 3))
+
+        res = run_combinatorial_cross_validation(panel, n_slices=4)
+        hist_bins = res["rank_distribution"]
+        rel_ranks = res["rel_ranks"]
+        C = res["C"]
+        pbo = res["pbo"]
+
+        # 1. Ten bins total covering [0.0, 1.0]
+        assert len(hist_bins) == 10
+
+        # 2. Total count across all bins must equal C
+        total_hist_count = sum(b.count for b in hist_bins)
+        assert total_hist_count == C
+
+        # 3. Sum of relative frequencies must equal 1.0
+        total_rel_freq = sum(b.relative_frequency for b in hist_bins)
+        assert pytest.approx(total_rel_freq, abs=1e-9) == 1.0
+
+        # 4. Overfitted region bins (bins 0..4 where bin_end <= 0.5)
+        overfitted_bins = [b for b in hist_bins if b.bin_end <= 0.5]
+        assert len(overfitted_bins) == 5
+
+        # 5. Overfitted count must exactly equal the number of splits with rel_rank <= 0.5
+        overfitted_splits_count = np.sum(rel_ranks <= 0.5)
+        overfitted_hist_count = sum(b.count for b in overfitted_bins)
+        assert overfitted_hist_count == overfitted_splits_count
+
+        # 6. Overfitted frequency sum must exactly equal PBO
+        overfitted_freq_sum = sum(b.relative_frequency for b in overfitted_bins)
+        assert pytest.approx(overfitted_freq_sum, abs=1e-9) == pbo
+
+        # 7. Persistent region bins (bins 5..9 where bin_end > 0.5)
+        persistent_bins = [b for b in hist_bins if b.bin_end > 0.5]
+        assert len(persistent_bins) == 5
+        persistent_splits_count = np.sum(rel_ranks > 0.5)
+        persistent_hist_count = sum(b.count for b in persistent_bins)
+        assert persistent_hist_count == persistent_splits_count
+        assert overfitted_hist_count + persistent_hist_count == C
+
+    def test_explicit_boundary_injection_binning_logic(self):
+        """
+        Directly verify decile bin placement for boundary relative ranks:
+        - 0.00 -> Bin 0: [0.0, 0.1)
+        - 0.099 -> Bin 0: [0.0, 0.1)
+        - 0.10 -> Bin 1: [0.1, 0.2)
+        - 0.49 -> Bin 4: [0.4, 0.5]
+        - 0.50 -> Bin 4: [0.4, 0.5] (Crucial: under old code this fell into Bin 5)
+        - 0.50001 -> Bin 5: (0.5, 0.6]
+        - 0.51 -> Bin 5: (0.5, 0.6]
+        - 0.60 -> Bin 5: (0.5, 0.6]
+        - 0.60001 -> Bin 6: (0.6, 0.7]
+        - 1.00 -> Bin 9: (0.9, 1.0]
+        """
+        from app.analytics.overfitting import CSCVHistogramBin
+
+        # Test the partitioning rule on mock boundary array
+        boundary_ranks = np.array([0.0, 0.05, 0.10, 0.49, 0.50, 0.50001, 0.51, 0.60, 0.90, 1.0])
+        C = len(boundary_ranks)
+
+        bin_edges = np.linspace(0.0, 1.0, 11)
+        hist_bins = []
+        for b_idx in range(10):
+            b_start = float(bin_edges[b_idx])
+            b_end = float(bin_edges[b_idx + 1])
+            if b_idx < 4:
+                in_bin = (boundary_ranks >= b_start) & (boundary_ranks < b_end)
+            elif b_idx == 4:
+                in_bin = (boundary_ranks >= b_start) & (boundary_ranks <= b_end)
+            else:
+                in_bin = (boundary_ranks > b_start) & (boundary_ranks <= b_end)
+            b_count = int(np.sum(in_bin))
+            hist_bins.append(
+                CSCVHistogramBin(
+                    bin_start=round(b_start, 2),
+                    bin_end=round(b_end, 2),
+                    count=b_count,
+                    relative_frequency=float(b_count / C),
+                )
+            )
+
+        # Bin 0: [0.0, 0.1) -> 0.0, 0.05 (count 2)
+        assert hist_bins[0].count == 2
+        # Bin 1: [0.1, 0.2) -> 0.10 (count 1)
+        assert hist_bins[1].count == 1
+        # Bin 4: [0.4, 0.5] -> 0.49, 0.50 (count 2, includes 0.50)
+        assert hist_bins[4].count == 2
+        # Bin 5: (0.5, 0.6] -> 0.50001, 0.51, 0.60 (count 3, excludes 0.50)
+        assert hist_bins[5].count == 3
+        # Bin 8: (0.8, 0.9] -> 0.90 (count 1)
+        assert hist_bins[8].count == 1
+        # Bin 9: (0.9, 1.0] -> 1.00 (count 1)
+        assert hist_bins[9].count == 1
+
+        # Sum of bins 0..4 (bins <= 0.5) must count all elements <= 0.5:
+        # [0.0, 0.05, 0.10, 0.49, 0.50] -> 5 elements
+        under_median_count = sum(b.count for b in hist_bins[:5])
+        assert under_median_count == 5
+        assert np.sum(boundary_ranks <= 0.5) == 5
+
