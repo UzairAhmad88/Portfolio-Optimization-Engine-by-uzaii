@@ -68,6 +68,7 @@ def configure_auth_for_tests(request: pytest.FixtureRequest):
         or "test_performance_attribution_api" in request.node.nodeid
         or "test_copula_tail_risk_api" in request.node.nodeid
         or "test_vine_copula_api" in request.node.nodeid
+        or "test_overfitting_api" in request.node.nodeid
     ):
         app.dependency_overrides.pop(get_current_active_user, None)
         app.dependency_overrides.pop(get_current_user, None)

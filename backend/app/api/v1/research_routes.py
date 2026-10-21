@@ -25,6 +25,10 @@ from app.research.models import (
     ExperimentRunResponse,
     ExperimentUpdateRequest,
 )
+from app.research.overfitting_models import (
+    OverfittingDiagnosticsRequest,
+    OverfittingDiagnosticsResponse,
+)
 from app.research.service import ResearchService
 
 logger = logging.getLogger(__name__)
@@ -282,3 +286,39 @@ async def compare_runs_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error comparing research runs.",
         )
+
+
+@router.post(
+    "/experiments/{experiment_id}/overfitting-diagnostics",
+    response_model=OverfittingDiagnosticsResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Compute backtest overfitting diagnostics (CSCV, PBO, DSR, MinBTL) across experiment runs",
+)
+async def compute_overfitting_diagnostics_endpoint(
+    experiment_id: str,
+    request: OverfittingDiagnosticsRequest,
+    current_user: Annotated[UserModel, Depends(get_current_active_user)],
+    session: Annotated[Session, Depends(get_db)],
+) -> OverfittingDiagnosticsResponse:
+    try:
+        return await run_in_threadpool(
+            ResearchService.compute_experiment_overfitting,
+            experiment_id=experiment_id,
+            req=request,
+            user=current_user,
+            db=session,
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        )
+    except Exception as exc:
+        logger.exception("Unexpected error in compute_overfitting_diagnostics: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error computing overfitting diagnostics.",
+        )
+

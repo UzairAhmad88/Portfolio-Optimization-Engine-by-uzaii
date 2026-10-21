@@ -36,8 +36,9 @@ class OverfittingDiagnosticsRequest(BaseModel):
     Request payload to compute on-demand backtest overfitting diagnostics
     across runs of a research experiment.
     """
-    experiment_id: str = Field(
-        description="UUID of the parent research experiment containing multiple strategy runs."
+    experiment_id: str | None = Field(
+        default=None,
+        description="UUID of the parent research experiment containing multiple strategy runs.",
     )
     run_ids: list[str] | None = Field(
         default=None,

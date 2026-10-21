@@ -7,19 +7,23 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
+import pandas as pd
 from fastapi import HTTPException, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
+from app.analytics.overfitting import compute_overfitting_diagnostics
 from app.auth.dependencies import check_dataset_access
 from app.backtesting.models import BacktestRequest
 from app.backtesting.service import execute_backtest
 from app.db.models import (
+    BacktestRunModel,
     DatasetModel,
     ResearchExperimentModel,
     ResearchExperimentRunModel,
@@ -28,6 +32,10 @@ from app.db.models import (
 from app.performance.models import PerformanceAnalysisRequest
 from app.performance.service import execute_performance_analysis
 from app.research.fingerprint import canonical_json_dumps, compute_config_fingerprint
+from app.research.overfitting_models import (
+    OverfittingDiagnosticsRequest,
+    OverfittingDiagnosticsResponse,
+)
 from app.research.models import (
     ComparisonRequest,
     ComparisonResponse,
@@ -792,3 +800,208 @@ class ResearchService:
             has_provenance_divergence=has_provenance_divergence,
             warnings=warnings,
         )
+
+    @staticmethod
+    def compute_experiment_overfitting(
+        experiment_id: str,
+        req: OverfittingDiagnosticsRequest,
+        user: UserModel,
+        db: Session,
+    ) -> OverfittingDiagnosticsResponse:
+        """
+        Computes Combinatorially Symmetric Cross-Validation (CSCV), Probability of
+        Backtest Overfitting (PBO), Deflated Sharpe Ratio (DSR), and Minimum Backtest
+        Length (MinBTL) across completed strategy runs of a research experiment.
+
+        Enforces tenant isolation, deterministic date alignment, run ordering,
+        and fail-closed integrity validation.
+        """
+        # 1. Fetch experiment and enforce tenant authorization
+        exp = db.get(ResearchExperimentModel, experiment_id)
+        if not exp or (exp.user_id != user.id and user.role != "admin"):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Research experiment '{experiment_id}' not found.",
+            )
+
+        # 2. Path / payload consistency check
+        if req.experiment_id and req.experiment_id.strip() != experiment_id:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Experiment ID in request body '{req.experiment_id}' does not match URL path '{experiment_id}'.",
+            )
+
+        # 3. Select and validate eligible strategy runs
+        if req.run_ids is not None:
+            # Explicit run subset requested
+            unique_req_ids = list(dict.fromkeys(req.run_ids))
+            if len(unique_req_ids) < 2:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="At least 2 distinct run IDs are required for cross-validation.",
+                )
+            if len(unique_req_ids) > 100:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Maximum number of candidate strategies for on-demand overfitting analysis is 100.",
+                )
+
+            runs = (
+                db.query(ResearchExperimentRunModel)
+                .filter(ResearchExperimentRunModel.id.in_(unique_req_ids))
+                .all()
+            )
+
+            found_ids = {r.id for r in runs}
+            missing = [rid for rid in unique_req_ids if rid not in found_ids]
+            if missing:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Run(s) not found: {missing}",
+                )
+
+            # Validate each run belongs to this experiment and user
+            for r in runs:
+                if r.experiment_id != exp.id or (r.user_id != user.id and user.role != "admin"):
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Research experiment run '{r.id}' not found.",
+                    )
+                if r.status != "succeeded":
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Run '{r.id}' (Run #{r.run_number}) did not succeed (status: {r.status}) and cannot be evaluated.",
+                    )
+                if not r.backtest_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Run '{r.id}' (Run #{r.run_number}) does not have an associated backtest simulation.",
+                    )
+
+            # Sort deterministically by run_number
+            runs.sort(key=lambda r: r.run_number)
+        else:
+            # Query all succeeded runs for this experiment with an associated backtest
+            runs = (
+                db.query(ResearchExperimentRunModel)
+                .filter(
+                    ResearchExperimentRunModel.experiment_id == exp.id,
+                    ResearchExperimentRunModel.status == "succeeded",
+                    ResearchExperimentRunModel.backtest_id.isnot(None),
+                )
+                .order_by(ResearchExperimentRunModel.run_number)
+                .all()
+            )
+
+        if len(runs) < 2:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"At least 2 eligible completed strategy runs with backtests are required for combinatorial cross-validation, found {len(runs)}.",
+            )
+
+        # 4. Extract equity curves and validate daily return series
+        series_map: dict[str, pd.Series] = {}
+        run_lengths: dict[str, int] = {}
+
+        for r in runs:
+            backtest = db.get(BacktestRunModel, r.backtest_id) if r.backtest_id else None
+            if not backtest or not backtest.equity_curve_json:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Run '{r.id}' (Run #{r.run_number}) is missing equity curve data.",
+                )
+
+            curve = backtest.get_equity_curve()
+            if not curve or len(curve) < 2:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Run '{r.id}' (Run #{r.run_number}) has insufficient equity curve observations ({len(curve) if curve else 0}).",
+                )
+
+            dates: list[str] = []
+            returns: list[float] = []
+
+            for pt in curve:
+                d = pt.get("date")
+                ret = pt.get("return_net")
+                if not d or not isinstance(d, str):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Run '{r.id}' contains invalid observation date format.",
+                    )
+                if ret is None or not math.isfinite(ret):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Run '{r.id}' contains non-finite net return values.",
+                    )
+                dates.append(d)
+                returns.append(float(ret))
+
+            # Duplicate date check within the run
+            if len(dates) != len(set(dates)):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Run '{r.id}' contains duplicate observation dates.",
+                )
+
+            series_map[r.id] = pd.Series(returns, index=dates, name=r.id)
+            run_lengths[r.id] = len(dates)
+
+        # 5. Deterministic Date Alignment (Inner Join)
+        df_raw = pd.DataFrame(series_map)
+        aligned_df = df_raw.dropna(how="any").sort_index()
+
+        T_aligned = len(aligned_df)
+        min_raw = min(run_lengths.values())
+
+        # Check observations sufficiency
+        min_required_obs = max(20, 2 * req.n_slices)
+        if T_aligned < min_required_obs:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Insufficient synchronized observation dates (T={T_aligned}) across selected runs. "
+                    f"At least {min_required_obs} aligned observations are required for {req.n_slices} time slices."
+                ),
+            )
+
+        # 6. Audit alignment trimming & snapshot consistency
+        alignment_warnings: list[str] = []
+        if T_aligned < 0.8 * min_raw:
+            alignment_warnings.append(
+                f"Date alignment trimmed significant non-overlapping observations (aligned {T_aligned} of {min_raw} common days). "
+                f"Strategy evaluation periods may diverge."
+            )
+
+        # Check snapshot consistency across runs
+        snapshots = [r.snapshot_id for r in runs if r.snapshot_id]
+        if snapshots and len(set(snapshots)) > 1:
+            alignment_warnings.append(
+                "Selected runs were executed against different dataset snapshots. Underlying market data divergence may affect results."
+            )
+        common_snapshot_id = snapshots[0] if (len(snapshots) == len(runs) and len(set(snapshots)) == 1) else None
+
+        # 7. Execute numerical computation engine
+        run_metadata = [
+            {"run_id": r.id, "run_number": r.run_number}
+            for r in runs
+        ]
+
+        diagnostics = compute_overfitting_diagnostics(
+            returns_matrix=aligned_df.to_numpy(dtype=float),
+            run_metadata=run_metadata,
+            n_slices=req.n_slices,
+            alpha=req.significance_level,
+            annualization_factor=req.annualization_factor,
+            experiment_id=exp.id,
+            experiment_name=exp.name,
+            strategy_type=exp.strategy_type,
+            dataset_id=exp.dataset_id,
+            snapshot_id=common_snapshot_id,
+        )
+
+        if alignment_warnings:
+            diagnostics.warnings.extend(alignment_warnings)
+
+        return diagnostics
+

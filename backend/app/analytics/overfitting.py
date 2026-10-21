@@ -478,6 +478,10 @@ def compute_overfitting_diagnostics(
     pbo_risk_level = classify_pbo_risk(pbo)
     nominal_sharpes = cscv_res["nominal_sharpes"]
 
+    # Align run_numbers in runs_summary with run_metadata
+    for s_i, item in enumerate(cscv_res["runs_summary"]):
+        item.run_number = run_numbers[s_i]
+
     # 2. Select strategy with best full-sample nominal Sharpe
     best_idx = int(np.argmax(nominal_sharpes))
     best_run_id = run_ids[best_idx]
@@ -487,9 +491,11 @@ def compute_overfitting_diagnostics(
     # 3. Higher-moment calculations on the best strategy's daily returns
     best_returns = arr[:, best_idx]
     if len(best_returns) >= 4:
-        skew = float(stats.skew(best_returns))
+        raw_skew = float(stats.skew(best_returns))
+        skew = raw_skew if np.isfinite(raw_skew) else 0.0
         # Pearson kurtosis (normal = 3.0)
-        kurt = float(stats.kurtosis(best_returns, fisher=False))
+        raw_kurt = float(stats.kurtosis(best_returns, fisher=False))
+        kurt = raw_kurt if np.isfinite(raw_kurt) else 3.0
     else:
         skew = 0.0
         kurt = 3.0
