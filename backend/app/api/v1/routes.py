@@ -30,6 +30,9 @@ from app.api.v1.schemas import (
     DatasetMetadataResponse,
     DatasetQuery,
     DatasetQueryResponse,
+    DatasetSnapshotCreateRequest,
+    DatasetSnapshotResponse,
+    DatasetSnapshotVerifyResponse,
     ErrorResponse,
     ExchangeCalendarResponse,
     HealthResponse,
@@ -37,6 +40,17 @@ from app.api.v1.schemas import (
     ValidationReportResponse,
 )
 from app.auth.dependencies import check_dataset_access, get_current_active_user
+from app.market_data.snapshot_service import (
+    SnapshotError,
+    SnapshotIntegrityError,
+    SnapshotNotFoundError,
+    SnapshotPermissionError,
+    SnapshotValidationError,
+    create_dataset_snapshot,
+    get_snapshot_by_id,
+    list_dataset_snapshots,
+    verify_snapshot_integrity,
+)
 from app.db.models import UserModel
 from app.db.session import engine, get_db
 from app.market_data.service import (
@@ -583,3 +597,161 @@ async def compare_portfolios_route(
             raise HTTPException(status_code=404, detail=result.errors[0])
         raise HTTPException(status_code=422, detail=result.model_dump())
     return result
+
+
+# =============================================================================
+# Stage 32: Dataset Snapshot & Provenance Endpoints
+# =============================================================================
+
+@router.post(
+    "/datasets/{dataset_id}/snapshots",
+    response_model=DatasetSnapshotResponse,
+    status_code=201,
+    summary="Create Immutable Dataset Snapshot",
+    description="Captures and freezes an immutable, content-addressed dataset snapshot with a cryptographic Merkle manifest.",
+)
+async def create_dataset_snapshot_route(
+    dataset_id: str,
+    request: DatasetSnapshotCreateRequest,
+    current_user: Annotated[UserModel, Depends(get_current_active_user)],
+    session: Annotated[Session, Depends(get_db)],
+):
+    try:
+        snapshot = create_dataset_snapshot(
+            dataset_id=dataset_id,
+            user=current_user,
+            session=session,
+            tag=request.tag,
+            description=request.description,
+            as_of_date=request.as_of_date,
+            strict_pit=request.strict_pit,
+            adjustment_policy_version=request.adjustment_policy_version,
+            snapshot_type="manual",
+        )
+        session.commit()
+        session.refresh(snapshot)
+        return DatasetSnapshotResponse(
+            id=snapshot.id,
+            dataset_id=snapshot.dataset_id,
+            user_id=snapshot.user_id,
+            tag=snapshot.tag,
+            description=snapshot.description,
+            snapshot_type=snapshot.snapshot_type,
+            manifest_sha256=snapshot.manifest_sha256,
+            manifest=snapshot.get_manifest(),
+            as_of_date=snapshot.as_of_date.isoformat() if snapshot.as_of_date else None,
+            point_in_time_status=snapshot.point_in_time_status,
+            calendar_version=snapshot.calendar_version,
+            adjustment_policy_version=snapshot.adjustment_policy_version,
+            is_frozen=snapshot.is_frozen,
+            total_bars_count=snapshot.total_bars_count,
+            total_actions_count=snapshot.total_actions_count,
+            created_at=snapshot.created_at.isoformat(),
+        )
+    except SnapshotValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except (SnapshotNotFoundError, DatasetNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except SnapshotPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+
+@router.get(
+    "/datasets/{dataset_id}/snapshots",
+    response_model=list[DatasetSnapshotResponse],
+    summary="List Dataset Snapshots",
+    description="Lists all snapshots created for a dataset in descending chronological order.",
+)
+async def list_dataset_snapshots_route(
+    dataset_id: str,
+    current_user: Annotated[UserModel, Depends(get_current_active_user)],
+    session: Annotated[Session, Depends(get_db)],
+    limit: int = 100,
+    offset: int = 0,
+):
+    check_dataset_access(session, dataset_id, current_user)
+    snapshots = list_dataset_snapshots(session, dataset_id, user=current_user, limit=limit, offset=offset)
+    return [
+        DatasetSnapshotResponse(
+            id=s.id,
+            dataset_id=s.dataset_id,
+            user_id=s.user_id,
+            tag=s.tag,
+            description=s.description,
+            snapshot_type=s.snapshot_type,
+            manifest_sha256=s.manifest_sha256,
+            manifest=s.get_manifest(),
+            as_of_date=s.as_of_date.isoformat() if s.as_of_date else None,
+            point_in_time_status=s.point_in_time_status,
+            calendar_version=s.calendar_version,
+            adjustment_policy_version=s.adjustment_policy_version,
+            is_frozen=s.is_frozen,
+            total_bars_count=s.total_bars_count,
+            total_actions_count=s.total_actions_count,
+            created_at=s.created_at.isoformat(),
+        )
+        for s in snapshots
+    ]
+
+
+@router.get(
+    "/datasets/snapshots/{snapshot_id}",
+    response_model=DatasetSnapshotResponse,
+    summary="Get Dataset Snapshot Details",
+    description="Retrieves metadata, provenance, and the canonical manifest for a dataset snapshot.",
+)
+async def get_dataset_snapshot_route(
+    snapshot_id: str,
+    current_user: Annotated[UserModel, Depends(get_current_active_user)],
+    session: Annotated[Session, Depends(get_db)],
+):
+    snapshot = get_snapshot_by_id(session, snapshot_id)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail=f"Snapshot '{snapshot_id}' not found.")
+    check_dataset_access(session, snapshot.dataset_id, current_user)
+    return DatasetSnapshotResponse(
+        id=snapshot.id,
+        dataset_id=snapshot.dataset_id,
+        user_id=snapshot.user_id,
+        tag=snapshot.tag,
+        description=snapshot.description,
+        snapshot_type=snapshot.snapshot_type,
+        manifest_sha256=snapshot.manifest_sha256,
+        manifest=snapshot.get_manifest(),
+        as_of_date=snapshot.as_of_date.isoformat() if snapshot.as_of_date else None,
+        point_in_time_status=snapshot.point_in_time_status,
+        calendar_version=snapshot.calendar_version,
+        adjustment_policy_version=snapshot.adjustment_policy_version,
+        is_frozen=snapshot.is_frozen,
+        total_bars_count=snapshot.total_bars_count,
+        total_actions_count=snapshot.total_actions_count,
+        created_at=snapshot.created_at.isoformat(),
+    )
+
+
+@router.get(
+    "/datasets/snapshots/{snapshot_id}/verify",
+    response_model=DatasetSnapshotVerifyResponse,
+    summary="Verify Snapshot Cryptographic Integrity",
+    description="Verifies that the frozen payload of a snapshot matches its cryptographic Merkle manifest digest.",
+)
+async def verify_snapshot_integrity_route(
+    snapshot_id: str,
+    current_user: Annotated[UserModel, Depends(get_current_active_user)],
+    session: Annotated[Session, Depends(get_db)],
+):
+    snapshot = get_snapshot_by_id(session, snapshot_id)
+    if not snapshot:
+        raise HTTPException(status_code=404, detail=f"Snapshot '{snapshot_id}' not found.")
+    check_dataset_access(session, snapshot.dataset_id, current_user)
+
+    try:
+        verify_snapshot_integrity(snapshot_id, session)
+        return DatasetSnapshotVerifyResponse(
+            snapshot_id=snapshot_id,
+            is_verified=True,
+            manifest_sha256=snapshot.manifest_sha256,
+            message="Snapshot integrity successfully verified against canonical observation manifest.",
+        )
+    except SnapshotIntegrityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))

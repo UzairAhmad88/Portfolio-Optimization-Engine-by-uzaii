@@ -350,9 +350,15 @@ class ResearchService:
                     training_window=int(config.get("training_window", 252)),
                     optimization_objective=config.get("objective") or "max_sharpe",
                     risk_free_rate=float(config.get("risk_free_rate", 0.0)),
+                    snapshot_id=config.get("snapshot_id"),
+                    auto_snapshot=bool(config.get("auto_snapshot", False)),
                 )
                 bt_resp = execute_backtest(bt_req, user, db)
                 backtest_id = bt_resp.id
+                if bt_resp.snapshot_id:
+                    run_record.snapshot_id = bt_resp.snapshot_id
+                elif config.get("snapshot_id"):
+                    run_record.snapshot_id = config.get("snapshot_id")
 
                 eq_curve = bt_resp.equity_curve
                 summary_kpis = {
@@ -513,6 +519,7 @@ class ResearchService:
             run_number=run_record.run_number,
             status=run_record.status,
             dataset_version_hash=run_record.dataset_version_hash,
+            snapshot_id=run_record.snapshot_id,
             config_fingerprint=run_record.config_fingerprint,
             execution_duration_ms=run_record.execution_duration_ms,
             backtest_id=run_record.backtest_id,
@@ -558,6 +565,7 @@ class ResearchService:
                     experiment_id=r.experiment_id,
                     run_number=r.run_number,
                     status=r.status,
+                    snapshot_id=r.snapshot_id,
                     config_fingerprint=r.config_fingerprint,
                     execution_duration_ms=r.execution_duration_ms,
                     is_reproducible=reproducible,
@@ -592,6 +600,7 @@ class ResearchService:
             run_number=run_record.run_number,
             status=run_record.status,
             dataset_version_hash=run_record.dataset_version_hash,
+            snapshot_id=run_record.snapshot_id,
             config_fingerprint=run_record.config_fingerprint,
             execution_duration_ms=run_record.execution_duration_ms,
             backtest_id=run_record.backtest_id,
@@ -612,6 +621,8 @@ class ResearchService:
     ) -> tuple[bool, list[str]]:
         """
         Evaluates whether a run can be faithfully reproduced from currently persisted assets.
+        If bound to an immutable dataset snapshot, reproducibility is guaranteed against
+        subsequent operational dataset mutations.
         """
         notes: list[str] = []
         if run.status != "succeeded":
@@ -620,6 +631,19 @@ class ResearchService:
         exp = run.experiment
         if not exp:
             return False, ["Parent research experiment definition was removed."]
+
+        # Check snapshot linkage first (Gate C frozen reproducibility)
+        if run.snapshot_id:
+            snap = run.snapshot
+            if not snap:
+                return False, [f"Referenced dataset snapshot '{run.snapshot_id}' could not be located."]
+            if not snap.frozen_payload_json:
+                return False, [f"Referenced dataset snapshot '{run.snapshot_id}' lacks frozen payload."]
+            notes.append(
+                f"Bound to immutable dataset snapshot '{run.snapshot_id}' "
+                f"(digest={snap.manifest_sha256[:16]}..., status={snap.point_in_time_status})."
+            )
+            return True, notes
 
         dataset = db.get(DatasetModel, exp.dataset_id)
         if not dataset:

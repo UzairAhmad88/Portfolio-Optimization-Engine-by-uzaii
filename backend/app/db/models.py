@@ -286,6 +286,7 @@ class DatasetSnapshotModel(Base):
         default=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
+    frozen_payload_json = Column(Text, nullable=True)
 
     dataset = relationship("DatasetModel", back_populates="snapshots")
     user = relationship("UserModel", backref="dataset_snapshots")
@@ -300,6 +301,14 @@ class DatasetSnapshotModel(Base):
             return {}
         try:
             return json.loads(self.manifest_json)
+        except Exception:
+            return {}
+
+    def get_frozen_payload(self) -> dict[str, Any]:
+        if not self.frozen_payload_json:
+            return {}
+        try:
+            return json.loads(self.frozen_payload_json)
         except Exception:
             return {}
 

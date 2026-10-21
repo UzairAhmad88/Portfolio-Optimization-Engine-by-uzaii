@@ -24,6 +24,10 @@ from app.backtesting.models import (
     RebalanceEvent,
 )
 from app.db.models import BacktestRunModel, UserModel
+from app.market_data.snapshot_service import (
+    create_dataset_snapshot,
+    resolve_snapshot_price_panel,
+)
 
 
 def execute_backtest(
@@ -33,23 +37,82 @@ def execute_backtest(
 ) -> BacktestResponse:
     """
     Executes a historical backtest simulation and persists results in the database.
+    Supports immutable dataset snapshot replay or on-the-fly auto-snapshotting.
     """
+    snapshot_used_id: str | None = None
+    snapshot_provenance: dict[str, Any] | None = None
+
     # 1. Prepare historical price panel and validate asset/dataset access
-    clean_prices, resolved_assets, currency, periods_per_year, warnings = prepare_backtest_data(
-        dataset_id=request.dataset_id,
-        requested_assets=request.assets,
-        start_date=request.start_date,
-        end_date=request.end_date,
-        user=current_user,
-        session=session,
-        min_required_observations=request.training_window + 2
-        if request.strategy_type == "walk_forward_optimization"
-        else 2,
-        use_point_in_time=request.use_point_in_time,
-        as_of_date=request.as_of_date,
-        strict_pit=request.strict_pit,
-        adjustment_type=request.adjustment_type,
-    )
+    if request.snapshot_id:
+        # Immutable Snapshot Replay Path: strict cryptographic verification & decoupling
+        clean_prices, resolved_assets, currency, periods_per_year, snapshot_provenance = (
+            resolve_snapshot_price_panel(
+                snapshot_id=request.snapshot_id,
+                user=current_user,
+                session=session,
+                requested_assets=request.assets,
+                start_date=request.start_date,
+                end_date=request.end_date,
+                adjustment_type=request.adjustment_type,
+                min_required_observations=request.training_window + 2
+                if request.strategy_type == "walk_forward_optimization"
+                else 2,
+            )
+        )
+        snapshot_used_id = request.snapshot_id
+        warnings = [
+            f"Replayed frozen dataset snapshot '{request.snapshot_id}' "
+            f"(digest={snapshot_provenance['manifest_sha256'][:16]}...)."
+        ]
+    elif request.auto_snapshot:
+        # Automatic Snapshot Creation Path: freeze inputs prior to simulation execution
+        snap = create_dataset_snapshot(
+            dataset_id=request.dataset_id,
+            user=current_user,
+            session=session,
+            tag=f"auto_bt_{uuid4().hex[:8]}",
+            description=f"Auto-snapshot for backtest: {request.name}",
+            snapshot_type="auto_backtest",
+            as_of_date=request.as_of_date or request.end_date,
+            strict_pit=request.strict_pit,
+            adjustment_policy_version="2026.1",
+        )
+        clean_prices, resolved_assets, currency, periods_per_year, snapshot_provenance = (
+            resolve_snapshot_price_panel(
+                snapshot_id=snap.id,
+                user=current_user,
+                session=session,
+                requested_assets=request.assets,
+                start_date=request.start_date,
+                end_date=request.end_date,
+                adjustment_type=request.adjustment_type,
+                min_required_observations=request.training_window + 2
+                if request.strategy_type == "walk_forward_optimization"
+                else 2,
+            )
+        )
+        snapshot_used_id = snap.id
+        warnings = [
+            f"Created and bound frozen dataset snapshot '{snap.id}' "
+            f"(digest={snapshot_provenance['manifest_sha256'][:16]}...)."
+        ]
+    else:
+        # Legacy/Operational Path: prepare_backtest_data
+        clean_prices, resolved_assets, currency, periods_per_year, warnings = prepare_backtest_data(
+            dataset_id=request.dataset_id,
+            requested_assets=request.assets,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            user=current_user,
+            session=session,
+            min_required_observations=request.training_window + 2
+            if request.strategy_type == "walk_forward_optimization"
+            else 2,
+            use_point_in_time=request.use_point_in_time,
+            as_of_date=request.as_of_date,
+            strict_pit=request.strict_pit,
+            adjustment_type=request.adjustment_type,
+        )
 
 
     # Map weights to canonical resolved asset IDs
@@ -92,6 +155,7 @@ def execute_backtest(
         id=backtest_id,
         user_id=current_user.id,
         dataset_id=request.dataset_id,
+        snapshot_id=snapshot_used_id,
         name=request.name,
         strategy_type=request.strategy_type,
         rebalance_frequency=request.rebalance_frequency,
@@ -115,6 +179,7 @@ def execute_backtest(
     return BacktestResponse(
         id=backtest_id,
         dataset_id=request.dataset_id,
+        snapshot_id=snapshot_used_id,
         user_id=current_user.id,
         name=request.name,
         strategy_type=request.strategy_type,
@@ -129,6 +194,7 @@ def execute_backtest(
         rebalance_events=rebalance_events,
         warnings=warnings,
         point_in_time_metadata=getattr(clean_prices, "attrs", {}).get("pit_metadata"),
+        snapshot_provenance=snapshot_provenance,
     )
 
 
@@ -157,6 +223,7 @@ def list_user_backtests(
             BacktestListItem(
                 id=r.id,
                 dataset_id=r.dataset_id,
+                snapshot_id=r.snapshot_id,
                 user_id=r.user_id,
                 name=r.name,
                 strategy_type=r.strategy_type,
@@ -206,6 +273,7 @@ def get_backtest_by_id(
     return BacktestResponse(
         id=record.id,
         dataset_id=record.dataset_id,
+        snapshot_id=record.snapshot_id,
         user_id=record.user_id,
         name=record.name,
         strategy_type=record.strategy_type,
@@ -219,6 +287,8 @@ def get_backtest_by_id(
         equity_curve=equity_curve,
         rebalance_events=rebalance_events,
         warnings=[],
+        point_in_time_metadata=None,
+        snapshot_provenance=record.snapshot.get_manifest() if record.snapshot else None,
     )
 
 

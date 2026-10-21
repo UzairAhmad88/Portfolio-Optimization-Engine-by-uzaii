@@ -201,6 +201,14 @@ Production-grade financial market-data integrity, exchange calendar session veri
 *Session 53 Remediation & Verification:* Remediated DEF-31-02 by explicitly documenting PSX lunar holiday gazette boundary (2020–2026) and adding contract tests. Verified all 511 backend tests and 43 frontend tests passing, clean Vite build, reversible migrations, and pushed commit `3df88ab` to `origin/main`. Documented in `docs/SESSION_53_STAGE_31_REMEDIATION_REPORT.md`.
 *Session 54 Owner Acceptance:* Comprehensive acceptance evidence reconciliation conducted in `docs/SESSION_54_STAGE_31_ACCEPTANCE_REVIEW.md`. Formally approved and accepted by Project Owner on October 21, 2026.
 
+### Stage 32 — Immutable Dataset Versioning, Research Snapshots & Point-in-Time Data Provenance Auditing (In Progress — Gates A, B, C Completed)
+Institutional research snapshotting, Merkle canonical observation manifest hashing, anti-tampering replay engine, and immutable dataset lineage architecture. Guarantees that historical backtests and research experiments resolve against strictly frozen underlying market data and corporate actions, insulated against future operational database modifications, bad tick corrections, or ledger revisions. Formulates schema version `1.1` canonical manifests (`DatasetManifest`) enforcing 8-decimal financial precision, deterministic primary key sorting, and composite SHA-256 Merkle digests. Implements Strategy A (Immutable Materialized Snapshot Payload) persisting normalized price bars and corporate actions in `frozen_payload_json` under migration `e5f6a7b8c9d0_add_frozen_payload_to_snapshots.py`. Snapshot creation (`create_dataset_snapshot`) and replay (`resolve_snapshot_price_panel`) services enforce point-in-time cutoffs, strict anti-leakage, dual-mode execution (manual tagging + automatic execution snapshotting), cryptographic digest verification, and fail-closed security with zero fallback to mutable operational tables.
+**Gate A (Architecture & Baseline Audit):** Completed in Session 55 (`docs/STAGE_32_GATE_A_BASELINE_AUDIT.md`).
+**Gate B (Manifest Engine & Relational Contracts):** Completed in Session 55 (`docs/STAGE_32_GATE_B_CONTRACTS.md`). Relational model `dataset_snapshots` and Alembic migration `d3e4f5a6b7c8`.
+**Gate C (Snapshot Creation, Replay & Deterministic Verification):** Completed in Session 56 (`docs/STAGE_32_GATE_C_SNAPSHOT_REPLAY.md`). Additive migration `e5f6a7b8c9d0`; manifest schema `1.1` (8 decimals); creation and replay services in `snapshot_service.py`; backtest (`execute_backtest`) and research (`ResearchExperimentService`) integrations; REST API endpoints for snapshot lifecycle and cryptographic verification; deterministic proof of 0.0 price drift under operational database mutations; 100% pass across 55 focused Stage 32 tests and full regression test suites.
+**Gate D (Independent Audit & Institutional Verification UX):** Pending project owner review and authorization.
+
+
 
 
 

@@ -203,3 +203,39 @@ class ExchangeCalendarResponse(BaseModel):
     timezone: str
     sessions: list[str]
     holidays: list[dict[str, str]]
+
+
+class DatasetSnapshotCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tag: str | None = Field(default=None, max_length=100, description="Optional human-readable release tag (e.g. baseline_2024_q1)")
+    description: str | None = Field(default=None, max_length=1000, description="Research or business context description")
+    as_of_date: date | None = Field(default=None, description="Point-in-time information availability cutoff date")
+    strict_pit: bool = Field(default=False, description="Whether to enforce strict point-in-time verification on corporate actions")
+    adjustment_policy_version: str | None = Field(default="2026.1", description="Adjustment policy version to seal")
+
+
+class DatasetSnapshotResponse(BaseModel):
+    id: str
+    dataset_id: str
+    user_id: str | None
+    tag: str | None
+    description: str | None
+    snapshot_type: str
+    manifest_sha256: str
+    manifest: dict[str, Any]
+    as_of_date: str | None
+    point_in_time_status: str
+    calendar_version: str | None
+    adjustment_policy_version: str | None
+    is_frozen: bool
+    total_bars_count: int
+    total_actions_count: int
+    created_at: str
+
+
+class DatasetSnapshotVerifyResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    snapshot_id: str
+    is_verified: bool
+    manifest_sha256: str
+    message: str

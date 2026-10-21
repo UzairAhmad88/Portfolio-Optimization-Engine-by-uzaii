@@ -157,6 +157,7 @@ class ExperimentRunResponse(BaseModel):
     run_number: int
     status: str
     dataset_version_hash: str | None
+    snapshot_id: str | None = None
     config_fingerprint: str
     execution_duration_ms: int | None
     backtest_id: str | None
@@ -175,6 +176,7 @@ class ExperimentRunListItem(BaseModel):
     experiment_id: str
     run_number: int
     status: str
+    snapshot_id: str | None = None
     config_fingerprint: str
     execution_duration_ms: int | None
     is_reproducible: bool

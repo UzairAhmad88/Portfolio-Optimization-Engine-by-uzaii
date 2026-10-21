@@ -97,6 +97,14 @@ class BacktestRequest(BaseModel):
         default="total",
         description="Adjustment return type: 'total' (dividend-inclusive) or 'price' (price-only).",
     )
+    snapshot_id: str | None = Field(
+        default=None,
+        description="Optional UUID of an immutable dataset snapshot to replay. Guarantees deterministic input data.",
+    )
+    auto_snapshot: bool = Field(
+        default=False,
+        description="When True and snapshot_id is omitted, automatically captures an immutable dataset snapshot prior to execution.",
+    )
 
 
     @model_validator(mode="after")
@@ -199,6 +207,10 @@ class BacktestSummaryMetrics(BaseModel):
 class BacktestResponse(BaseModel):
     id: str
     dataset_id: str
+    snapshot_id: str | None = Field(
+        default=None,
+        description="UUID of the immutable dataset snapshot linked to this backtest run.",
+    )
     user_id: str | None
     name: str
     strategy_type: str
@@ -216,12 +228,17 @@ class BacktestResponse(BaseModel):
         default=None,
         description="Reproducibility metadata for point-in-time corporate action adjustments.",
     )
+    snapshot_provenance: dict[str, Any] | None = Field(
+        default=None,
+        description="Provenance and cryptographic verification metadata of the replayed dataset snapshot.",
+    )
 
 
 
 class BacktestListItem(BaseModel):
     id: str
     dataset_id: str
+    snapshot_id: str | None = None
     user_id: str | None
     name: str
     strategy_type: str
