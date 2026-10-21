@@ -214,15 +214,15 @@ Institutional research snapshotting, Merkle canonical observation manifest hashi
 1. *Database-Local Integrity Boundary:* The frozen payload and expected manifest digest reside within the same database trust boundary; application-level tamper protection is guaranteed, but external KMS/WORM signing is required to protect against a privileged root database administrator.
 2. *PostgreSQL Concurrency Boundary:* Consistent snapshot creation under concurrent writes remains unproven in local SQLite testing; deployments with concurrent writers should execute under `REPEATABLE READ` or acquire an advisory transaction lock.
 
-### Stage 33 — Combinatorial Cross-Validation, Backtest Overfitting Diagnostics & Deflated Sharpe Ratio Engine (PROPOSED — Awaiting Project Owner Approval)
+### Stage 33 — Combinatorial Cross-Validation, Backtest Overfitting Diagnostics & Deflated Sharpe Ratio Engine (Gate A Completed — Active)
 Institutional quantitative backtest validation, multiple testing selection-bias correction, and empirical Probability of Backtest Overfitting (PBO) diagnostics. Addresses the critical quantitative research gap wherein multiple strategy trials on immutable dataset snapshots inflate in-sample Sharpe ratios through data snooping. Formulates the Deflated Sharpe Ratio (DSR) (Bailey & López de Prado, 2014) adjusting for trial count ($N$), return skewness, kurtosis, and variance of trials; computes Minimum Backtest Length (MinBTL); implements Combinatorially Symmetric Cross-Validation (CSCV) to quantify PBO ($\mathbb{P}[\text{OOS} < \text{Median}]$) and degradation slope; integrates directly into the Research Lab experiment run history (`ResearchExperimentRunModel`).
-**Gate Plan (Proposed):**
-- **Gate A:** Baseline audit, mathematical formulation & CSCV combinatorial slicing benchmark.
-- **Gate B:** Contracts, Pydantic domain models, and analytical fixture reconciliation.
-- **Gate C:** Core numerical computation engine (DSR, PBO, MinBTL, CSCV partitioning).
-- **Gate D:** Research Lab service integration, multi-run comparison audit, and regression testing.
-- **Gate E:** Institutional Overfitting Diagnostics UX in `ResearchLabPage.tsx` with CSCV distribution charts and DSR badges.
-- **Gate F:** Independent quantitative audit & acceptance review.
+**Gate Plan & Progress:**
+- **Gate A (Architecture & Baseline Audit):** Completed in Session 62 (`docs/STAGE_33_GATE_A_BASELINE_AUDIT.md`). Verified baseline models (`ResearchExperimentRunModel`, `BacktestRunModel.equity_curve_json`); formulated closed-form DSR, MinBTL, and CSCV combinatorial matrix mathematics; empirically benchmarked vectorized pre-aggregation algorithm ($186.16\text{ ms}$ for 12,870 combinations across 50 trials of 1,260 days); analyzed asymptotic boundary conditions ($N=1, V=0, \text{SR}<0$).
+- **Gate B (Contracts & Domain Schemas):** Pending. Pydantic request/response schemas and analytical benchmark fixtures.
+- **Gate C (Core Numerical Engine):** Pending. Vectorized computation engine in `backend/app/analytics/overfitting.py`.
+- **Gate D (Research Lab Integration):** Pending. Service integration, multi-run extraction, and REST API endpoints.
+- **Gate E (Overfitting Diagnostics UX):** Pending. Institutional UI cards, degradation scatter plot, and CSCV rank distribution chart.
+- **Gate F (Independent Audit & Acceptance):** Pending. Read-only independent audit and full regression verification.
 
 
 
