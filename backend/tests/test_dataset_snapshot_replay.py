@@ -650,3 +650,95 @@ def test_snapshot_api_lifecycle(test_setup):
     verify_res = client.get(f"/api/v1/datasets/snapshots/{snapshot_id}/verify")
     assert verify_res.status_code == 200
     assert verify_res.json()["is_verified"] is True
+
+
+def test_snapshot_api_malformed_payload_returns_409(test_setup):
+    """
+    Workstream 32.B (Gate F remediation):
+    Malformed or corrupt JSON in frozen_payload_json must fail closed with HTTP 409 (Conflict)
+    rather than an unhandled 500 server error.
+    """
+    client = TestClient(app)
+    dataset_id = test_setup["dataset_id"]
+
+    # 1. Create a snapshot
+    create_res = client.post(
+        f"/api/v1/datasets/{dataset_id}/snapshots",
+        json={"tag": "malformed_test_snap", "description": "Testing malformed payload"},
+    )
+    assert create_res.status_code == 201
+    snapshot_id = create_res.json()["id"]
+
+    # 2. Corrupt payload JSON in the database directly
+    with get_db_session() as session:
+        snap = session.get(DatasetSnapshotModel, snapshot_id)
+        snap.frozen_payload_json = "{ INVALID_JSON: corrupt }}}"
+        session.commit()
+
+    # 3. Call verify route - must return 409 Conflict with informative message
+    verify_res = client.get(f"/api/v1/datasets/snapshots/{snapshot_id}/verify")
+    assert verify_res.status_code == 409
+    assert "Failed to deserialize frozen payload" in verify_res.json()["detail"]
+
+
+def test_snapshot_api_empty_bars_payload_returns_409(test_setup):
+    """
+    Workstream 32.B (Gate F remediation):
+    A frozen payload with empty bars must fail closed with HTTP 409.
+    """
+    client = TestClient(app)
+    dataset_id = test_setup["dataset_id"]
+
+    create_res = client.post(
+        f"/api/v1/datasets/{dataset_id}/snapshots",
+        json={"tag": "empty_bars_snap", "description": "Testing empty bars payload"},
+    )
+    assert create_res.status_code == 201
+    snapshot_id = create_res.json()["id"]
+
+    with get_db_session() as session:
+        snap = session.get(DatasetSnapshotModel, snapshot_id)
+        snap.frozen_payload_json = json.dumps({"price_bars": [], "corporate_actions": []})
+        session.commit()
+
+    verify_res = client.get(f"/api/v1/datasets/snapshots/{snapshot_id}/verify")
+    assert verify_res.status_code == 409
+    assert "contains no price bars" in verify_res.json()["detail"]
+
+
+def test_snapshot_v1_2_currency_tampering_fails_verification(test_setup):
+    """
+    Workstream 32.A (Gate F remediation):
+    Under manifest_version '1.2', mutating currency inside the frozen payload
+    causes cryptographic verification to fail closed with SnapshotIntegrityError and HTTP 409.
+    """
+    client = TestClient(app)
+    dataset_id = test_setup["dataset_id"]
+
+    create_res = client.post(
+        f"/api/v1/datasets/{dataset_id}/snapshots",
+        json={"tag": "currency_tamper_test", "description": "Testing currency tampering"},
+    )
+    assert create_res.status_code == 201
+    snapshot_id = create_res.json()["id"]
+
+    # Mutate currency in frozen payload JSON from USD to EUR
+    with get_db_session() as session:
+        snap = session.get(DatasetSnapshotModel, snapshot_id)
+        payload = json.loads(snap.frozen_payload_json)
+        assert payload["price_bars"][0]["currency"] == "USD"
+        payload["price_bars"][0]["currency"] = "EUR"
+        snap.frozen_payload_json = json.dumps(payload)
+        session.commit()
+
+    # Direct service call raises SnapshotIntegrityError
+    with get_db_session() as session:
+        with pytest.raises(SnapshotIntegrityError) as exc_info:
+            verify_snapshot_integrity(snapshot_id, session)
+        assert "Digest mismatch in snapshot" in str(exc_info.value)
+
+    # API verify route returns HTTP 409
+    verify_res = client.get(f"/api/v1/datasets/snapshots/{snapshot_id}/verify")
+    assert verify_res.status_code == 409
+    assert "Digest mismatch in snapshot" in verify_res.json()["detail"]
+

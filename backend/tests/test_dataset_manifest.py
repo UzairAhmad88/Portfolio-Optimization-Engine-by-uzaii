@@ -211,3 +211,43 @@ def test_manifest_serialization():
     assert "AAPL:US" in json_str
     assert m.total_bars == 4
     assert m.total_actions == 2
+
+
+def test_manifest_v1_2_currency_sensitivity():
+    """
+    Workstream 32.A (Gate F remediation):
+    Under manifest_version >= '1.2', mutating a bar's currency MUST change the digest.
+    Under manifest_version == '1.1', currency was omitted from bar lines so digest was insensitive.
+    """
+    records1 = _sample_records()
+    records2 = [dict(r) for r in _sample_records()]
+    records2[0]["currency"] = "EUR"  # Mutate currency from USD to EUR
+
+    # Under v1.2 (default), currency is bound in the canonical bar line:
+    m1_v12 = build_dataset_manifest("ds_test_1", records1, manifest_version="1.2")
+    m2_v12 = build_dataset_manifest("ds_test_1", records2, manifest_version="1.2")
+    assert m1_v12.bars_digest != m2_v12.bars_digest
+    assert m1_v12.manifest_sha256 != m2_v12.manifest_sha256
+
+    # Under legacy v1.1, currency is NOT in bar line, demonstrating backward compatibility:
+    m1_v11 = build_dataset_manifest("ds_test_1", records1, manifest_version="1.1")
+    m2_v11 = build_dataset_manifest("ds_test_1", records2, manifest_version="1.1")
+    assert m1_v11.bars_digest == m2_v11.bars_digest
+    assert m1_v11.manifest_sha256 == m2_v11.manifest_sha256
+
+
+def test_negative_zero_canonicalization():
+    """
+    Workstream 32.C (Gate F remediation):
+    Verifies that IEEE-754 -0.0 is normalized to +0.0, avoiding spurious hash divergence.
+    """
+    records_pos = _sample_records()
+    records_neg = [dict(r) for r in _sample_records()]
+    # Set high and low or volume with signed zero
+    records_pos[0]["open"] = 0.0
+    records_neg[0]["open"] = -0.0
+
+    digest_pos, _, _ = compute_price_bars_digest(records_pos, manifest_version="1.2")
+    digest_neg, _, _ = compute_price_bars_digest(records_neg, manifest_version="1.2")
+    assert digest_pos == digest_neg
+

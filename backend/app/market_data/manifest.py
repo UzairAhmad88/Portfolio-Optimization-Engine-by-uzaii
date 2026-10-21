@@ -4,7 +4,7 @@ Canonical observation manifest generation and cryptographic hashing engine.
 Workstream 32.1 & 32.3:
 - Provides deterministic, permutation-invariant content-addressing for financial datasets.
 - Eliminates formatting, row-ordering, and whitespace fragility of raw file digests.
-- Computes hierarchical Merkle digests for normalized price bars and corporate actions.
+- Computes hierarchical composite manifest digests for normalized price bars and corporate actions.
 - Seals point-in-time cutoff, exchange calendar, and adjustment policy versions.
 - Preserves 8-decimal numerical precision for financial price calculations and corporate split fractions.
 - Supports canonical frozen payload serialization and deserialization for immutable snapshot replay.
@@ -20,7 +20,7 @@ from typing import Any, Iterable
 
 from app.market_data.corporate_actions import CorporateActionEvent, CorporateActionStatus, CorporateActionType
 
-DEFAULT_MANIFEST_VERSION = "1.1"
+DEFAULT_MANIFEST_VERSION = "1.2"
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,10 @@ class DatasetManifest:
 def _format_float(val: float | None, precision: int = 8) -> str:
     if val is None:
         return "null"
-    return f"{float(val):.{precision}f}"
+    f_val = float(val)
+    if f_val == 0.0:
+        f_val = 0.0  # Normalize IEEE-754 -0.0 to +0.0
+    return f"{f_val:.{precision}f}"
 
 
 def _format_date(val: Any) -> str:
@@ -93,6 +96,10 @@ def compute_price_bars_digest(
     Precision policy:
     - manifest_version == "1.0": 6 decimal places for price, 2 for volume.
     - manifest_version >= "1.1": 8 decimal places for price, 4 for volume (preserves penny fractions and sub-penny assets).
+
+    Currency binding policy:
+    - manifest_version < "1.2": Currency omitted from individual bar lines (legacy v1.0 and v1.1).
+    - manifest_version >= "1.2": Currency explicitly bound in each canonical bar line.
     """
     price_prec = 6 if manifest_version == "1.0" else 8
     vol_prec = 2 if manifest_version == "1.0" else 4
@@ -119,8 +126,13 @@ def compute_price_bars_digest(
         adj_str = _format_float(adj_val, price_prec)
         vol_str = _format_float(_get_val(r, "volume"), vol_prec)
 
-        # Canonical bar line: TICKER|MARKET|DATE|OPEN|HIGH|LOW|CLOSE|ADJ_CLOSE|VOLUME
-        bar_line = f"{ticker}|{market}|{d_str}|{op_str}|{hi_str}|{lo_str}|{cl_str}|{adj_str}|{vol_str}"
+        # Canonical bar line:
+        # v1.0 / v1.1: TICKER|MARKET|DATE|OPEN|HIGH|LOW|CLOSE|ADJ_CLOSE|VOLUME
+        # v1.2+:      TICKER|MARKET|CURRENCY|DATE|OPEN|HIGH|LOW|CLOSE|ADJ_CLOSE|VOLUME
+        if manifest_version >= "1.2":
+            bar_line = f"{ticker}|{market}|{currency}|{d_str}|{op_str}|{hi_str}|{lo_str}|{cl_str}|{adj_str}|{vol_str}"
+        else:
+            bar_line = f"{ticker}|{market}|{d_str}|{op_str}|{hi_str}|{lo_str}|{cl_str}|{adj_str}|{vol_str}"
         normalized_bars.append((ticker, market, d_str, bar_line))
 
         # Accumulate asset boundary statistics
@@ -230,7 +242,7 @@ def build_dataset_manifest(
 ) -> DatasetManifest:
     """
     Builds the authoritative canonical DatasetManifest with hierarchical composite hashing.
-    Supports versioned manifest schema ("1.0" or "1.1").
+    Supports versioned manifest schema ("1.0", "1.1", or "1.2").
     """
     bars_digest, total_bars, assets_summary = compute_price_bars_digest(records, manifest_version=manifest_version)
     actions_digest, total_actions, action_event_ids = compute_corporate_actions_digest(corporate_actions, manifest_version=manifest_version)
@@ -240,7 +252,7 @@ def build_dataset_manifest(
     adj_v = str(adjustment_policy_version).strip() if adjustment_policy_version else "null"
     pit_st = str(point_in_time_status).strip()
 
-    # Merkle composite manifest digest
+    # Hierarchical composite manifest digest
     version_tag = "v1" if manifest_version == "1.0" else f"v{manifest_version}"
     composite_payload = (
         f"DATASET_MANIFEST:{version_tag}:{dataset_id}:{bars_digest}:{actions_digest}:"

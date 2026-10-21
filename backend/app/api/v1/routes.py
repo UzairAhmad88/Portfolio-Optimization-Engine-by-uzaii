@@ -733,7 +733,7 @@ async def get_dataset_snapshot_route(
     "/datasets/snapshots/{snapshot_id}/verify",
     response_model=DatasetSnapshotVerifyResponse,
     summary="Verify Snapshot Cryptographic Integrity",
-    description="Verifies that the frozen payload of a snapshot matches its cryptographic Merkle manifest digest.",
+    description="Verifies that the frozen payload of a snapshot matches its cryptographic composite manifest digest.",
 )
 async def verify_snapshot_integrity_route(
     snapshot_id: str,

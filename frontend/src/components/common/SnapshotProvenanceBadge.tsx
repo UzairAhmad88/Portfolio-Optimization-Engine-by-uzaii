@@ -184,7 +184,7 @@ export const SnapshotProvenanceBadge: React.FC<SnapshotProvenanceBadgeProps> = (
                   <button
                     onClick={() => copyToClipboard(manifestHash, 'manifest_hash')}
                     className="text-slate-500 hover:text-white ml-auto shrink-0 p-0.5"
-                    title="Copy Merkle Manifest Hash"
+                    title="Copy Manifest Hash"
                   >
                     {copiedKey === 'manifest_hash' ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
                   </button>
@@ -238,7 +238,7 @@ export const SnapshotProvenanceBadge: React.FC<SnapshotProvenanceBadgeProps> = (
               {isVerifying ? (
                 <>
                   <RefreshCw size={12} className="animate-spin text-sky-400" />
-                  Verifying Merkle Root...
+                  Verifying Composite Digest...
                 </>
               ) : (
                 <>

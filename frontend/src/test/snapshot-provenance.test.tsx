@@ -141,7 +141,7 @@ describe('SnapshotProvenanceBadge Component', () => {
       />
     );
 
-    const copyBtn = screen.getByTitle('Copy Merkle Manifest Hash');
+    const copyBtn = screen.getByTitle('Copy Manifest Hash');
     fireEvent.click(copyBtn);
 
     expect(writeTextMock).toHaveBeenCalledWith(

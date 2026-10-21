@@ -181,7 +181,7 @@ def create_dataset_snapshot(
         else:
             effective_pit_status = "verified_point_in_time" if strict_pit else "unverified_legacy"
 
-    # 7. Compute Canonical Manifest and Merkle Root
+    # 7. Compute Canonical Manifest and Hierarchical Composite Digest
     manifest: DatasetManifest = build_dataset_manifest(
         dataset_id=dataset_id,
         records=bars_models,
@@ -251,7 +251,7 @@ def resolve_snapshot_price_panel(
 ) -> tuple[pd.DataFrame, list[str], str, int, dict[str, Any]]:
     """
     Reconstructs the frozen historical input panel using ONLY the snapshot's captured
-    materialized data and verifies cryptographic Merkle integrity.
+    materialized data and verifies cryptographic composite manifest integrity.
 
     Guarantees:
     - Never falls back to mutable current operational tables.
@@ -318,7 +318,7 @@ def resolve_snapshot_price_panel(
         or recomputed.actions_digest != snapshot.get_manifest().get("actions_digest")
     ):
         raise SnapshotIntegrityError(
-            f"Sub-component Merkle digest mismatch in snapshot '{snapshot_id}'."
+            f"Sub-component composite digest mismatch in snapshot '{snapshot_id}'."
         )
 
     # 6. Parse date bounds
@@ -512,7 +512,18 @@ def verify_snapshot_integrity(snapshot_id: str, session: Session) -> bool:
     if not snapshot.frozen_payload_json:
         raise SnapshotIntegrityError(f"Snapshot '{snapshot_id}' lacks frozen payload.")
 
-    frozen_bars, frozen_actions = deserialize_frozen_payload(snapshot.frozen_payload_json)
+    try:
+        frozen_bars, frozen_actions = deserialize_frozen_payload(snapshot.frozen_payload_json)
+    except Exception as exc:
+        raise SnapshotIntegrityError(
+            f"Failed to deserialize frozen payload for snapshot '{snapshot_id}': {exc}"
+        ) from exc
+
+    if not frozen_bars:
+        raise SnapshotIntegrityError(
+            f"Snapshot '{snapshot_id}' frozen payload contains no price bars."
+        )
+
     manifest_meta = snapshot.get_manifest()
     m_version = manifest_meta.get("manifest_version", DEFAULT_MANIFEST_VERSION)
 
