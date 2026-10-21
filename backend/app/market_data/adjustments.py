@@ -38,6 +38,8 @@ class AdjustmentPolicy:
     dividend_method: str = "crsp_reinvestment"   # P_adj = P_raw * (1 - D / P_prior)
     round_precision: int = 6                     # Rounding precision for adjustment factors
     allow_unsupported_complex: bool = False      # Rejects spin-offs/mergers unless explicitly handled
+    adjust_dividends: bool = True                # If False, dividend factor remains 1.0 (price return series)
+
 
 
 def calculate_split_and_dividend_factors(
@@ -110,6 +112,8 @@ def calculate_split_and_dividend_factors(
             split_multiplier[:target_idx] *= (1.0 / k)
 
         elif ev.event_type == CorporateActionType.CASH_DIVIDEND:
+            if not policy.adjust_dividends:
+                continue
             div_val = float(ev.value)
             if prior_close is None or prior_close <= 0:
                 raise ValueError(

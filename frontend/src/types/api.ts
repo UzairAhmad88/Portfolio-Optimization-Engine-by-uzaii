@@ -404,7 +404,12 @@ export interface BacktestRequest {
   test_window?: number;
   optimization_objective?: BacktestOptimizationObjective;
   risk_free_rate?: number;
+  use_point_in_time?: boolean;
+  as_of_date?: string | null;
+  strict_pit?: boolean;
+  adjustment_type?: "total" | "price";
 }
+
 
 export interface EquityPoint {
   date: string;
@@ -476,7 +481,9 @@ export interface BacktestResponse {
   equity_curve: EquityPoint[];
   rebalance_events: RebalanceEvent[];
   warnings: string[];
+  point_in_time_metadata?: Record<string, any> | null;
 }
+
 
 export interface BacktestListItem {
   id: string;

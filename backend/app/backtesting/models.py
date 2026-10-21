@@ -81,6 +81,23 @@ class BacktestRequest(BaseModel):
         le=1.0,
         description="Annualized risk-free benchmark rate for Sharpe ratio calculation.",
     )
+    use_point_in_time: bool = Field(
+        default=False,
+        description="When True, dynamically resolves corporate actions under point-in-time cutoffs.",
+    )
+    as_of_date: date | None = Field(
+        default=None,
+        description="Point-in-time information availability cutoff date for corporate actions.",
+    )
+    strict_pit: bool = Field(
+        default=False,
+        description="When True, fails closed if any corporate action lacks verified announcement date.",
+    )
+    adjustment_type: str = Field(
+        default="total",
+        description="Adjustment return type: 'total' (dividend-inclusive) or 'price' (price-only).",
+    )
+
 
     @model_validator(mode="after")
     def validate_request_bounds(self) -> BacktestRequest:
@@ -195,6 +212,11 @@ class BacktestResponse(BaseModel):
     equity_curve: list[EquityPoint]
     rebalance_events: list[RebalanceEvent]
     warnings: list[str] = Field(default_factory=list)
+    point_in_time_metadata: dict[str, Any] | None = Field(
+        default=None,
+        description="Reproducibility metadata for point-in-time corporate action adjustments.",
+    )
+
 
 
 class BacktestListItem(BaseModel):

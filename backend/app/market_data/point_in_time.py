@@ -85,9 +85,15 @@ def filter_point_in_time_actions(
 
     as_of_d = cutoff.as_of_date
 
+    candidates: list[CorporateActionEvent] = []
+
     for ev in actions:
         if ev.status == CorporateActionStatus.CANCELLED:
-            continue
+            # If cancellation was announced on or prior to cutoff, it is cancelled as of cutoff
+            if cutoff.strict and ev.announcement_date and ev.announcement_date <= as_of_d:
+                continue
+            elif not cutoff.strict and ev.effective_date <= as_of_d:
+                continue
 
         if cutoff.strict:
             if ev.announcement_date is None:
@@ -103,14 +109,36 @@ def filter_point_in_time_actions(
                 continue
 
             # If announcement_date <= as_of_d, information was known at decision time!
-            eligible.append(ev)
+            candidates.append(ev)
 
         else:
             # Legacy non-strict mode: check effective_date
             if ev.effective_date <= as_of_d:
-                eligible.append(ev)
+                candidates.append(ev)
             else:
                 future_count += 1
+
+    # Revision resolution: if multiple events share (asset_id, event_type, effective_date),
+    # select the latest revision known as of the cutoff date to prevent double-counting
+    # and guarantee that future corrections do not distort the view known at earlier cutoffs.
+    grouped_by_key: dict[tuple[str, str, date], list[CorporateActionEvent]] = {}
+    for ev in candidates:
+        key = (ev.asset_id, ev.event_type.value, ev.effective_date)
+        grouped_by_key.setdefault(key, []).append(ev)
+
+    eligible: list[CorporateActionEvent] = []
+    for key, ev_list in grouped_by_key.items():
+        if len(ev_list) == 1:
+            eligible.append(ev_list[0])
+        else:
+            ev_list.sort(
+                key=lambda x: (
+                    x.announcement_date or x.effective_date,
+                    x.created_at,
+                    x.revision_id or "",
+                )
+            )
+            eligible.append(ev_list[-1])
 
     if cutoff.strict:
         if unverified_count > 0:

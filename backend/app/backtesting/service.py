@@ -45,7 +45,12 @@ def execute_backtest(
         min_required_observations=request.training_window + 2
         if request.strategy_type == "walk_forward_optimization"
         else 2,
+        use_point_in_time=request.use_point_in_time,
+        as_of_date=request.as_of_date,
+        strict_pit=request.strict_pit,
+        adjustment_type=request.adjustment_type,
     )
+
 
     # Map weights to canonical resolved asset IDs
     canonical_weights: dict[str, float] | None = None
@@ -123,7 +128,9 @@ def execute_backtest(
         equity_curve=equity_curve,
         rebalance_events=rebalance_events,
         warnings=warnings,
+        point_in_time_metadata=getattr(clean_prices, "attrs", {}).get("pit_metadata"),
     )
+
 
 
 def list_user_backtests(
