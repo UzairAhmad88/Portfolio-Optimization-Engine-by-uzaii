@@ -10,10 +10,12 @@ import {
   ShieldCheck,
   PlusCircle,
   History as HistoryIcon,
+  TrendingDown,
 } from 'lucide-react';
 import { apiClient } from '../../api/client';
 import { useDataset } from '../../context/DatasetContext';
 import { SnapshotProvenanceBadge } from '../common/SnapshotProvenanceBadge';
+import { OverfittingDiagnosticsStudio } from '../research/OverfittingDiagnosticsStudio';
 import type {
   ComparisonResponse,
   DatasetMetadataResponse,
@@ -24,7 +26,7 @@ import type {
   ResearchStrategyType,
 } from '../../types/api';
 
-type ActiveTab = 'library' | 'new-experiment' | 'run-detail' | 'comparison';
+type ActiveTab = 'library' | 'new-experiment' | 'run-detail' | 'comparison' | 'overfitting';
 
 export const ResearchLabPage: React.FC = () => {
   const { currentDataset, savedDatasets, availableAssets } = useDataset();
@@ -72,6 +74,9 @@ export const ResearchLabPage: React.FC = () => {
 
   // Available completed runs for comparison
   const [allCompletedRuns, setAllCompletedRuns] = useState<{ runId: string; label: string; expName: string; strat: string }[]>([]);
+
+  // Selected experiment ID for overfitting diagnostics
+  const [selectedExpForOverfitting, setSelectedExpForOverfitting] = useState<string | null>(null);
 
   // Load experiments on mount
   useEffect(() => {
@@ -353,6 +358,14 @@ export const ResearchLabPage: React.FC = () => {
             <GitCompare size={14} />
             <span>Strategy Comparison {selectedRunIdsForCompare.length > 0 ? `(${selectedRunIdsForCompare.length})` : ''}</span>
           </button>
+          <button
+            onClick={() => setActiveTab('overfitting')}
+            className={`btn ${activeTab === 'overfitting' ? 'btn-primary' : 'btn-ghost'}`}
+            style={{ fontSize: '13px', padding: '6px 14px' }}
+          >
+            <TrendingDown size={14} />
+            <span>Overfitting Diagnostics</span>
+          </button>
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -460,6 +473,17 @@ export const ResearchLabPage: React.FC = () => {
                           >
                             <PlayCircle size={13} />
                             <span>Runs</span>
+                          </button>
+                          <button
+                            onClick={() => {
+                              setSelectedExpForOverfitting(exp.id);
+                              setActiveTab('overfitting');
+                            }}
+                            className="btn btn-secondary btn-sm"
+                            title="Diagnose Overfitting (CSCV / PBO / DSR)"
+                          >
+                            <TrendingDown size={13} />
+                            <span>Overfitting</span>
                           </button>
                           <button
                             onClick={() => handleDeleteExperiment(exp.id, exp.name)}
@@ -1295,6 +1319,17 @@ export const ResearchLabPage: React.FC = () => {
             </div>
           )}
         </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* TAB 5: OVERFITTING DIAGNOSTICS & DEFLATED SHARPE STUDIO                    */}
+      {/* ========================================================================= */}
+      {activeTab === 'overfitting' && (
+        <OverfittingDiagnosticsStudio
+          experiments={experiments}
+          initialExperimentId={selectedExpForOverfitting || selectedExperiment?.id}
+          onSelectExperiment={(expId) => setSelectedExpForOverfitting(expId)}
+        />
       )}
     </div>
   );

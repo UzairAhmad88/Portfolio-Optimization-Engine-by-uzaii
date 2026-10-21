@@ -2345,4 +2345,93 @@ export interface VineBacktestResponse {
   tca_report?: TCAReport;
 }
 
+// ============================================================================
+// Stage 33: Combinatorial Cross-Validation, PBO, DSR & Overfitting Diagnostics
+// ============================================================================
+
+export type PBORiskLevel = 'low' | 'moderate' | 'high' | 'severe';
+
+export interface OverfittingDiagnosticsRequest {
+  experiment_id?: string | null;
+  run_ids?: string[] | null;
+  n_slices?: number;
+  significance_level?: number;
+  annualization_factor?: number;
+}
+
+export interface DegradationRegression {
+  slope: number;
+  intercept: number;
+  r_squared: number;
+  p_value?: number | null;
+  std_err?: number | null;
+}
+
+export interface CSCVCombinationsPoint {
+  combination_id: number;
+  selected_run_id: string;
+  is_sharpe: number;
+  oos_sharpe: number;
+  oos_rank: number;
+  relative_rank: number;
+  is_overfitted: boolean;
+}
+
+export interface CSCVHistogramBin {
+  bin_start: number;
+  bin_end: number;
+  count: number;
+  relative_frequency: number;
+}
+
+export interface RunOverfittingSummary {
+  run_id: string;
+  run_number: number;
+  nominal_sharpe: number;
+  selection_frequency_is: number;
+  mean_oos_sharpe_when_selected?: number | null;
+  mean_oos_rank_when_selected?: number | null;
+}
+
+export interface OverfittingDiagnosticsResponse {
+  experiment_id: string;
+  experiment_name: string;
+  strategy_type: string;
+  dataset_id: string;
+  snapshot_id?: string | null;
+
+  // Sample dimensions
+  evaluated_runs_count: number;
+  aligned_observations_count: number;
+  n_slices: number;
+  total_combinations_count: number;
+
+  // Overfitting Metrics
+  pbo: number;
+  pbo_risk_level: PBORiskLevel;
+
+  // Statistical Deflation
+  best_run_id: string;
+  best_run_number: number;
+  best_nominal_sharpe: number;
+  expected_max_sharpe: number;
+  deflated_sharpe_ratio: number;
+  is_statistically_significant: boolean;
+
+  // Track Record & Higher Moments
+  min_backtest_length_years?: number | null;
+  actual_backtest_length_years: number;
+  skewness: number;
+  kurtosis: number;
+
+  // Empirical Cross-Validation Analytics
+  degradation_regression: DegradationRegression;
+  combinations_sample: CSCVCombinationsPoint[];
+  rank_distribution: CSCVHistogramBin[];
+  runs_summary: RunOverfittingSummary[];
+
+  warnings: string[];
+  generated_at: string;
+}
+
 

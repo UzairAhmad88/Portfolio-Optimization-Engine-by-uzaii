@@ -56,6 +56,8 @@ import type {
   ExperimentRunListItem,
   ExperimentRunResponse,
   ExperimentUpdateRequest,
+  OverfittingDiagnosticsRequest,
+  OverfittingDiagnosticsResponse,
   PerformanceAnalysisRequest,
   PerformanceReportListItem,
   PerformanceResponse,
@@ -616,6 +618,17 @@ export const apiClient = {
       body: JSON.stringify(payload),
     });
     return handleResponse<ComparisonResponse>(res);
+  },
+
+  async computeOverfittingDiagnostics(
+    experimentId: string,
+    payload: OverfittingDiagnosticsRequest
+  ): Promise<OverfittingDiagnosticsResponse> {
+    const res = await secureFetch(`${BASE_URL}/research/experiments/${experimentId}/overfitting-diagnostics`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    return handleResponse<OverfittingDiagnosticsResponse>(res);
   },
 
   async optimizeRobustPortfolio(payload: RobustOptimizationRequest): Promise<RobustOptimizationResponse> {
