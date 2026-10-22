@@ -19,6 +19,7 @@ from app.reports.contracts import (
     ResearchDiagnosticsAnnexPayload,
     InstitutionalReportResponse,
 )
+from app.reports.assembler import ReportAssemblerService
 
 __all__ = [
     "CommonReportEnvelope",
@@ -34,4 +35,5 @@ __all__ = [
     "InstitutionalTearSheetPayload",
     "ResearchDiagnosticsAnnexPayload",
     "InstitutionalReportResponse",
+    "ReportAssemblerService",
 ]

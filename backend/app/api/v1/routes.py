@@ -23,6 +23,7 @@ from app.api.v1.risk_parity_routes import router as risk_parity_router
 from app.api.v1.robust_routes import router as robust_router
 from app.api.v1.risk_simulation_routes import router as risk_simulation_router
 from app.api.v1.scenario_routes import router as scenario_router
+from app.api.v1.reporting_routes import router as reporting_router
 from app.api.v1.schemas import (
     CorporateActionCreate,
     CorporateActionResponse,
@@ -131,6 +132,9 @@ router.include_router(attribution_router)
 
 # Mount Copula Tail Risk and Tail Risk Parity routes
 router.include_router(copula_router)
+
+# Mount Institutional Reporting, Strategy Fact Sheets, and Tear Sheets routes
+router.include_router(reporting_router)
 
 
 @router.get(
