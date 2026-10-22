@@ -225,10 +225,14 @@ Institutional quantitative backtest validation, multiple testing selection-bias 
 - **Gate E Remediation:** Completed in Session 67 (`docs/STAGE_33_GATE_E_RESEARCH_LAB_UX.md`). Remediated DEF-E-01 (PBO boundary consistency), DEF-E-02 (CSCV sampling disclosure), DEF-E-03 (RFC 4180 CSV escaping & warning preservation), and DEF-E-04 (SVG clipPath isolation). Verified in Session 68 audit.
 - **Gate F (Independent Release Audit & Acceptance):** Completed in Session 69 (`docs/STAGE_33_GATE_F_RELEASE_AUDIT.md`). Verified mathematical EVT and DSR formulation, CSCV combinatorial matrix partitioning, PBO reconciliation within $10^{-12}$, complete-case return synchronization, and RFC 4180 export integrity. Verified 100% test pass rate across 591 backend tests and 73 frontend tests, clean Vite production build, zero TypeScript errors. Formally approved and accepted by Project Owner on October 22, 2026.
 
-
-
-
-
+### Stage 34 — Institutional Tear Sheets, Strategy Fact Sheets & Research PDF Export Engine (Gate A Complete — Active)
+Institutional-grade, publication-ready reporting artifacts and PDF generation architecture for quantitative strategies, backtest runs, and research lab experiments. Formulates three primary output products: (1) **Strategy Fact Sheet** (1-page executive summary for allocators), (2) **Institutional Tear Sheet** (2-page comprehensive risk, return, asset-level attribution, and transaction cost analysis report), and (3) **Research Diagnostics Annex** (optional 3rd page for research experiments featuring Stage 33 PBO, DSR, MinBTL, and CSCV distributions). Implements a strict architectural separation: canonical backend data compilation and validated financial metrics; frontend presentation, preview, responsive print layouts, and browser-native vector PDF generation via CSS Paged Media (`@page`, `@media print`), eliminating heavy server-side PDF dependencies (WeasyPrint/Puppeteer/ReportLab). Enforces strict gross vs. net metric separation, immutable dataset provenance lineage (binding Stage 32 SHA-256 manifest digests), and mathematically rigorous undefined-data semantics (never coercing undefined or unavailable metrics into zero).
+**Gate Plan & Progress:**
+- **Gate A (Architecture, Domain Contracts & Analytical Fixtures):** Completed in Session 70 (`docs/STAGE_34_GATE_A_ARCHITECTURE_AND_CONTRACTS.md`). Established Pydantic v2 domain schemas (`backend/app/reports/contracts.py`), mirroring TypeScript contracts (`frontend/src/types/reporting.ts`), canonical metric registry for 15 quantitative metrics (`metric_registry.py`), and 15 deterministic analytical fixtures (`reporting_fixtures.py`) covering dual gross/net returns, missing benchmarks, undefined values, large time series, and Stage 33 overfitting annexes. 21 dedicated contract tests passing; zero regressions across 64 focused backend tests, 73 frontend tests, and clean Vite build.
+- **Gate B (Report Aggregation & Assembler Service):** Planned. Aggregation service assembling report payloads from backtests, benchmark returns, and Stage 32/33 datasets with structured warning generation.
+- **Gate C (Institutional PDF Templates & Print CSS):** Planned. Print-optimized CSS Paged Media templates for 1-page Fact Sheet, 2-page Tear Sheet, and 3-page Annex with SVG vector charts.
+- **Gate D (Application & UI Integration):** Planned. "Export Institutional PDF" actions and interactive print preview modal in Backtesting and Research Lab interfaces.
+- **Gate E (Independent Release Audit):** Planned. Independent quantitative and visual release audit across all three report types.
 
 ## Production considerations
 
