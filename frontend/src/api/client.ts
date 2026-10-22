@@ -101,6 +101,13 @@ import type {
   ValidationReportResponse,
   VaRCVaRStandaloneRequest,
 } from '../types/api';
+import type {
+  StrategyFactSheetPayload,
+  InstitutionalTearSheetPayload,
+  ResearchDiagnosticsAnnexPayload,
+  InstitutionalReportResponse,
+} from '../types/reporting';
+
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api/v1';
 
@@ -981,8 +988,56 @@ export const apiClient = {
     }
     return raw as VineBacktestResponse;
   },
+
+  // ==========================================
+  // STAGE 34: Institutional Reporting Endpoints
+  // ==========================================
+  async getStrategyFactSheet(
+    backtestId: string,
+    benchmarkAsset?: string | null
+  ): Promise<StrategyFactSheetPayload> {
+    const q = benchmarkAsset ? `?benchmark_asset=${encodeURIComponent(benchmarkAsset)}` : '';
+    const res = await secureFetch(`${BASE_URL}/reports/fact-sheet/${encodeURIComponent(backtestId)}${q}`, {
+      method: 'GET',
+    });
+    return handleResponse<StrategyFactSheetPayload>(res);
+  },
+
+  async getInstitutionalTearSheet(
+    backtestId: string,
+    benchmarkAsset?: string | null
+  ): Promise<InstitutionalTearSheetPayload> {
+    const q = benchmarkAsset ? `?benchmark_asset=${encodeURIComponent(benchmarkAsset)}` : '';
+    const res = await secureFetch(`${BASE_URL}/reports/tear-sheet/${encodeURIComponent(backtestId)}${q}`, {
+      method: 'GET',
+    });
+    return handleResponse<InstitutionalTearSheetPayload>(res);
+  },
+
+  async getResearchDiagnosticsAnnex(
+    experimentId: string,
+    req?: OverfittingDiagnosticsRequest | null
+  ): Promise<ResearchDiagnosticsAnnexPayload> {
+    const res = await secureFetch(`${BASE_URL}/reports/research-annex/${encodeURIComponent(experimentId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req || {}),
+    });
+    return handleResponse<ResearchDiagnosticsAnnexPayload>(res);
+  },
+
+  async getUnifiedInstitutionalReport(
+    backtestId: string,
+    benchmarkAsset?: string | null,
+    experimentId?: string | null
+  ): Promise<InstitutionalReportResponse> {
+    const params = new URLSearchParams();
+    if (benchmarkAsset) params.append('benchmark_asset', benchmarkAsset);
+    if (experimentId) params.append('experiment_id', experimentId);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await secureFetch(`${BASE_URL}/reports/unified/${encodeURIComponent(backtestId)}${qs}`, {
+      method: 'GET',
+    });
+    return handleResponse<InstitutionalReportResponse>(res);
+  },
 };
-
-
-
-
