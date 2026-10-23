@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quant-portfolio-engine"
-version = "0.1.0"
-description = "API-first quantitative portfolio research engine — Stage 1 scaffold"
+version = "0.7.0"
+description = "Production-grade quantitative portfolio research, optimization, backtesting, and institutional reporting engine"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115.0",
