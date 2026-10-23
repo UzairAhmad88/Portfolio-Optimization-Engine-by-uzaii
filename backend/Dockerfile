@@ -4,6 +4,7 @@ FROM python:3.11-slim
 # Set environment configuration
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app \
     CHROME_BIN=/usr/bin/chromium \
     CHROMIUM_PATH=/usr/bin/chromium \
     TMPDIR=/app/tmp \

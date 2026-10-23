@@ -1,0 +1,4 @@
+# Ensure Unix line endings for shell scripts and Docker build files
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.conf text eol=lf

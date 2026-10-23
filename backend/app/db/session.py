@@ -81,8 +81,7 @@ def init_db(target_engine: Engine | None = None) -> None:
     Base.metadata.create_all(bind=eng)
 
 
-# Automatically create tables on engine creation
-init_db(engine)
+
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -220,3 +220,66 @@ def test_concurrent_dataset_queries():
     for res in results:
         assert res["row_count"] == 2
         assert res["data"][0]["ticker"] == "AAPL"
+
+
+def test_alembic_fresh_database_migration_to_head():
+    """
+    Regression test for DEF-82-01:
+    Verifies that a fresh database can be migrated from <base> to Alembic head without
+    duplicate table collisions or pre-empted DDL from module-level imports.
+    """
+    import os
+    import shutil
+    import subprocess
+    import sys
+    import tempfile
+    from sqlalchemy import create_engine, inspect
+
+    temp_dir = tempfile.mkdtemp(prefix="quant_alembic_test_")
+    try:
+        test_db = os.path.join(temp_dir, "migrated.db").replace("\\", "/")
+        env = os.environ.copy()
+        env["DATABASE_URL"] = f"sqlite:///{test_db}"
+
+        # Execute alembic upgrade head in isolated subprocess
+        res = subprocess.run(
+            [sys.executable, "-m", "alembic", "upgrade", "head"],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res.returncode == 0, f"Alembic upgrade head failed: {res.stderr}\n{res.stdout}"
+
+        # Verify current revision is head
+        res_cur = subprocess.run(
+            [sys.executable, "-m", "alembic", "current"],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        assert res_cur.returncode == 0
+        assert "e5f6a7b8c9d0" in res_cur.stdout or "head" in res_cur.stdout
+
+        # Verify all essential tables are created
+        engine = create_engine(f"sqlite:///{test_db}")
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+        required_tables = {
+            "alembic_version",
+            "users",
+            "datasets",
+            "dataset_assets",
+            "price_bars",
+            "backtest_runs",
+            "scenario_runs",
+            "risk_simulation_runs",
+            "performance_reports",
+            "research_experiments",
+            "research_experiment_runs",
+            "corporate_actions",
+            "dataset_snapshots",
+        }
+        missing = required_tables - tables
+        assert not missing, f"Migrated database is missing expected tables: {missing}"
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
