@@ -163,6 +163,20 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return body as T;
 }
 
+async function handleBlobResponse(res: Response): Promise<Blob> {
+  if (!res.ok) {
+    let message = `API request failed with status ${res.status}`;
+    try {
+      const err = await res.json();
+      if (err && err.detail) message = err.detail;
+    } catch {
+      // non-JSON error
+    }
+    throw new ApiError(res.status, message);
+  }
+  return res.blob();
+}
+
 function secureFetch(url: string, init?: RequestInit): Promise<Response> {
   return fetch(url, {
     ...init,
@@ -1039,5 +1053,57 @@ export const apiClient = {
       method: 'GET',
     });
     return handleResponse<InstitutionalReportResponse>(res);
+  },
+
+  // ==========================================
+  // STAGE 34 GATE D: Server-Side PDF Exporters
+  // ==========================================
+  async exportStrategyFactSheetPdf(
+    backtestId: string,
+    benchmarkAsset?: string | null
+  ): Promise<Blob> {
+    const q = benchmarkAsset ? `?benchmark_asset=${encodeURIComponent(benchmarkAsset)}` : '';
+    const res = await secureFetch(`${BASE_URL}/reports/fact-sheet/${encodeURIComponent(backtestId)}/export${q}`, {
+      method: 'GET',
+    });
+    return handleBlobResponse(res);
+  },
+
+  async exportInstitutionalTearSheetPdf(
+    backtestId: string,
+    benchmarkAsset?: string | null
+  ): Promise<Blob> {
+    const q = benchmarkAsset ? `?benchmark_asset=${encodeURIComponent(benchmarkAsset)}` : '';
+    const res = await secureFetch(`${BASE_URL}/reports/tear-sheet/${encodeURIComponent(backtestId)}/export${q}`, {
+      method: 'GET',
+    });
+    return handleBlobResponse(res);
+  },
+
+  async exportResearchDiagnosticsAnnexPdf(
+    experimentId: string,
+    req?: OverfittingDiagnosticsRequest | null
+  ): Promise<Blob> {
+    const res = await secureFetch(`${BASE_URL}/reports/research-annex/${encodeURIComponent(experimentId)}/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req || {}),
+    });
+    return handleBlobResponse(res);
+  },
+
+  async exportUnifiedInstitutionalReportPdf(
+    backtestId: string,
+    benchmarkAsset?: string | null,
+    experimentId?: string | null
+  ): Promise<Blob> {
+    const params = new URLSearchParams();
+    if (benchmarkAsset) params.append('benchmark_asset', benchmarkAsset);
+    if (experimentId) params.append('experiment_id', experimentId);
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    const res = await secureFetch(`${BASE_URL}/reports/unified/${encodeURIComponent(backtestId)}/export${qs}`, {
+      method: 'GET',
+    });
+    return handleBlobResponse(res);
   },
 };

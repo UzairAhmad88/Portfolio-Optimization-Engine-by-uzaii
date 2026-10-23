@@ -11,6 +11,7 @@
 
 import React, { useState } from 'react';
 import type { InstitutionalReportResponse } from '../../types/reporting';
+import { apiClient } from '../../api/client';
 import { StrategyFactSheetView } from './StrategyFactSheetView';
 
 import { InstitutionalTearSheetView } from './InstitutionalTearSheetView';
@@ -29,6 +30,8 @@ export const InstitutionalReportViewer: React.FC<InstitutionalReportViewerProps>
 }) => {
   const [activeTab, setActiveTab] = useState<'fact_sheet' | 'tear_sheet' | 'all'>(initialTab);
   const [includeAnnex, setIncludeAnnex] = useState<boolean>(Boolean(report.research_annex));
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const factSheet = report.fact_sheet;
   const tearSheet = report.tear_sheet;
@@ -36,6 +39,38 @@ export const InstitutionalReportViewer: React.FC<InstitutionalReportViewerProps>
 
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleExportPdf = async () => {
+    const backtestId = report.envelope.source_backtest_id || 'backtest';
+    setIsExporting(true);
+    setExportError(null);
+    try {
+      let blob: Blob;
+      let filename = `report_${activeTab}.pdf`;
+      if (activeTab === 'fact_sheet') {
+        blob = await apiClient.exportStrategyFactSheetPdf(backtestId);
+        filename = `fact_sheet_${backtestId.slice(0, 8)}.pdf`;
+      } else if (activeTab === 'tear_sheet') {
+        blob = await apiClient.exportInstitutionalTearSheetPdf(backtestId);
+        filename = `tear_sheet_${backtestId.slice(0, 8)}.pdf`;
+      } else {
+        blob = await apiClient.exportUnifiedInstitutionalReportPdf(backtestId, null, report.envelope.source_experiment_id || undefined);
+        filename = `institutional_dossier_${backtestId.slice(0, 8)}.pdf`;
+      }
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setExportError(err?.message || 'Failed to export server PDF.');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   return (
@@ -95,6 +130,30 @@ export const InstitutionalReportViewer: React.FC<InstitutionalReportViewerProps>
 
           <button
             type="button"
+            className="toolbar-export-btn"
+            onClick={handleExportPdf}
+            disabled={isExporting}
+            style={{
+              backgroundColor: '#0D9488',
+              color: '#FFFFFF',
+              border: 'none',
+              fontSize: '13px',
+              fontWeight: 600,
+              padding: '8px 16px',
+              borderRadius: '6px',
+              cursor: isExporting ? 'wait' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              opacity: isExporting ? 0.7 : 1,
+            }}
+            title="Download authoritative server-rendered institutional PDF"
+          >
+            {isExporting ? '⏳ Rendering...' : '📥 Export PDF'}
+          </button>
+
+          <button
+            type="button"
             className="toolbar-print-btn"
             onClick={handlePrint}
             title="Trigger browser print dialog to save as PDF or print on letter/A4 paper"
@@ -109,6 +168,12 @@ export const InstitutionalReportViewer: React.FC<InstitutionalReportViewerProps>
           )}
         </div>
       </div>
+
+      {exportError && (
+        <div style={{ backgroundColor: '#FEF2F2', borderBottom: '1px solid #FCA5A5', padding: '8px 24px', color: '#991B1B', fontSize: '12px' }}>
+          <strong>Export Error:</strong> {exportError}
+        </div>
+      )}
 
       {/* Screen Canvas with Physical Page Simulation */}
       <main className="report-canvas-container">
