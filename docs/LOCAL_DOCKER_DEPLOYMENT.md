@@ -62,6 +62,7 @@ cp .env.example .env
 > ```bash
 > python -c "import secrets; print(secrets.token_hex(32))"
 > ```
+> In `APP_ENV=production`, the application strictly fails closed at startup if `JWT_SECRET_KEY` is omitted, shorter than 32 characters, or configured with a known development placeholder.
 
 ### Step 2: Build and Launch Services
 Build the container images and launch the stack in detached mode:

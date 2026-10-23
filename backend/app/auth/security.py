@@ -16,14 +16,81 @@ import jwt
 
 logger = logging.getLogger("app.auth.security")
 
-# Secret key resolution: require explicit env var in production; fallback to dev secret in test/dev
-JWT_SECRET_KEY = os.environ.get(
-    "JWT_SECRET_KEY",
-    "quant_engine_dev_secret_key_change_in_production_9f83a2b1c0d4e5",
-)
+# Canonical development secret key reserved strictly for non-production environments
+DEV_JWT_SECRET_KEY = "quant_engine_dev_secret_key_change_in_production_9f83a2b1c0d4e5"
 JWT_ALGORITHM = "HS256"
 DEFAULT_TOKEN_EXPIRE_MINUTES = int(os.environ.get("ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
 TOKEN_ISSUER = "quant-portfolio-engine"
+
+# Explicit blacklist of known development keys and example placeholders
+KNOWN_INSECURE_SECRETS: frozenset[str] = frozenset([
+    "quant_engine_dev_secret_key_change_in_production_9f83a2b1c0d4e5",
+    "change_me_to_a_secure_random_hex_key_before_production_deployment",
+    "change_this_to_a_cryptographically_secure_random_key_in_production",
+    "change-this-to-a-secure-random-secret-in-production",
+    "secret",
+    "password",
+    "jwt_secret",
+    "changeme",
+    "dev_secret",
+])
+
+
+def is_production_environment() -> bool:
+    """
+    Returns True if the application environment is configured for production.
+    Checks APP_ENV and ENVIRONMENT case-insensitively.
+    """
+    app_env = os.environ.get("APP_ENV", os.environ.get("ENVIRONMENT", "")).strip().lower()
+    return app_env in ("production", "prod")
+
+
+def get_jwt_secret_key() -> str:
+    """
+    Resolves and cryptographically validates the JWT signing secret key.
+
+    Security Rules:
+    - Production Mode (APP_ENV=production|prod):
+      1. Secret must be explicitly provided in JWT_SECRET_KEY.
+      2. Secret must NOT match any known development or placeholder key.
+      3. Secret must satisfy a minimum length of 32 characters (256 bits).
+      Violations fail closed immediately with a non-sensitive RuntimeError.
+    - Non-Production Mode (development, test, local, or unset):
+      Uses JWT_SECRET_KEY if explicitly set, or safely falls back to DEV_JWT_SECRET_KEY.
+    """
+    secret = os.environ.get("JWT_SECRET_KEY", "").strip()
+    is_prod = is_production_environment()
+
+    if is_prod:
+        if not secret:
+            raise RuntimeError(
+                "Production configuration error: JWT_SECRET_KEY environment variable is mandatory when APP_ENV=production."
+            )
+        if secret in KNOWN_INSECURE_SECRETS:
+            raise RuntimeError(
+                "Production configuration error: JWT_SECRET_KEY cannot use a known default or placeholder secret in production."
+            )
+        if len(secret) < 32:
+            raise RuntimeError(
+                "Production configuration error: JWT_SECRET_KEY must be at least 32 characters (256 bits) in production."
+            )
+        return secret
+
+    if secret:
+        return secret
+    return DEV_JWT_SECRET_KEY
+
+
+def validate_jwt_configuration() -> None:
+    """
+    Validates JWT signing configuration at application startup.
+    Fails closed if running in production with an invalid secret key.
+    """
+    get_jwt_secret_key()
+
+
+# Retained for backward compatibility with existing imports
+JWT_SECRET_KEY = DEV_JWT_SECRET_KEY
 
 
 def hash_password(password: str) -> str:
@@ -72,7 +139,8 @@ def create_access_token(
     if claims:
         payload.update(claims)
 
-    encoded_jwt = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
+    secret_key = get_jwt_secret_key()
+    encoded_jwt = jwt.encode(payload, secret_key, algorithm=JWT_ALGORITHM)
     return encoded_jwt
 
 
@@ -81,9 +149,10 @@ def decode_access_token(token: str) -> dict[str, Any]:
     Decodes and validates a JWT token signature and expiration.
     Raises jwt.ExpiredSignatureError or jwt.InvalidTokenError on failure.
     """
+    secret_key = get_jwt_secret_key()
     return jwt.decode(
         token,
-        JWT_SECRET_KEY,
+        secret_key,
         algorithms=[JWT_ALGORITHM],
         issuer=TOKEN_ISSUER,
         options={"require": ["exp", "sub", "iat"]},
