@@ -4,18 +4,83 @@ services:
     container_name: quant_portfolio_postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: quant_user
-      POSTGRES_PASSWORD: quant_password
-      POSTGRES_DB: quant_portfolio_db
+      POSTGRES_USER: ${POSTGRES_USER:-quant_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quant_password}
+      POSTGRES_DB: ${POSTGRES_DB:-quant_portfolio_db}
     ports:
-      - "5432:5432"
+      # Bound strictly to loopback interface to prevent public exposure
+      - "127.0.0.1:5432:5432"
     volumes:
       - quant_pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U quant_user -d quant_portfolio_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-quant_user} -d ${POSTGRES_DB:-quant_portfolio_db}"]
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - quant_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: quant_portfolio_backend
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-quant_user}:${POSTGRES_PASSWORD:-quant_password}@postgres:5432/${POSTGRES_DB:-quant_portfolio_db}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-quant_engine_dev_secret_key_change_in_production_9f83a2b1c0d4e5}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://localhost:80,http://127.0.0.1,http://127.0.0.1:80}
+      CHROME_BIN: /usr/bin/chromium
+      CHROMIUM_PATH: /usr/bin/chromium
+      PDF_MAX_CONCURRENT_RENDERS: ${PDF_MAX_CONCURRENT_RENDERS:-2}
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # Optional backend direct port for testing/development (bound to loopback)
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8000/api/v1/health\").read()'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      # Writable in-memory temporary directory for PDF generation artifacts
+      - /app/tmp:size=256M,uid=10001,gid=10001,mode=1777
+    networks:
+      - quant_network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: quant_portfolio_frontend
+    restart: unless-stopped
+    ports:
+      # Primary application entry point serving the UI and proxying API calls
+      - "${FRONTEND_PORT:-80}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - quant_network
+
+networks:
+  quant_network:
+    name: quant_portfolio_network
+    driver: bridge
 
 volumes:
   quant_pgdata:
