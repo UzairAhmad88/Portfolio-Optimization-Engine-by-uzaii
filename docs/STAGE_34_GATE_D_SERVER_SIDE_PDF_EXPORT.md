@@ -1,6 +1,6 @@
 # Stage 34 Gate D: Secure Server-Side PDF Rendering Pipeline & Export Dispatcher
 
-**Status:** IMPLEMENTED — Awaiting Independent Review & Acceptance
+**Status:** ACCEPTED with Operational Disclosures (Session 78 Project-Owner Approval)
 **Branch:** `main`
 **Base Commit:** `22a4284`
 **Delivery Scope:** Server-side PDF rendering architecture, sandboxed headless browser pipeline, authenticated REST export endpoints, pypdf physical pagination verification, security boundaries, and frontend PDF download integration.
@@ -164,8 +164,14 @@ In `frontend/src/components/reports/InstitutionalReportViewer.tsx`, an instituti
 
 ---
 
-## 10. Status & Scope Boundary
+## 10. Status, Acceptance & Scope Boundary
 
-- **Gate D Status:** IMPLEMENTED.
-- **Stage 34 Status:** In Progress (Gates A, B, C accepted; Gate D implemented awaiting owner review; Gate E planned).
-- **Gate E:** Has NOT been started.
+- **Gate D Status:** FORMALLY ACCEPTED with Operational Disclosures (October 24, 2026, Session 78 Project-Owner Approval).
+  - Accepted based on independent audit report confirming zero quantitative calculation drift, 644/644 backend tests passing, 88/88 frontend tests passing, clean Vite build, and physical `pypdf` pagination verification across all report products.
+  - Operational Disclosures accepted:
+    - **OBS-34-D-01 (Medium):** Chromium `--no-sandbox` isolation delegated to container boundary in production environments.
+    - **OBS-34-D-02 (Medium):** Process-local concurrency semaphore (`_RENDER_SEMAPHORE`) requiring reverse-proxy or Celery queue in scaled multi-worker deployments.
+    - **OBS-34-D-03 (Low):** Host network requests prevented via template-level HTML entity escaping and static schema rather than `--host-rules` kernel flags.
+    - **OBS-34-D-04 (Low):** Broad exception handling in `assemble_unified_report` swallowing 404 on unowned annex requests.
+- **Stage 34 Status:** In Progress (Gates A, B, C, and D Accepted; Gate E planned).
+- **Gate E:** Ready to be initiated upon project owner instruction; has NOT yet been started.
