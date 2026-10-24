@@ -68,6 +68,20 @@ An exhaustive search of all tracked files confirmed that exactly 8 files declare
 - **Backend Regression Suite:** 663 pytest tests passed in 191.52s (3 PostgreSQL integration tests skipped cleanly on local host without PostgreSQL; verified passing in CI).
 - **Git Formatting Hygiene:** `git diff --check` passed with 0 warnings or whitespace errors.
 
+### 4.3 Remote CI Verification on Exact Release Commit
+- **Release Candidate Commit:** [`2fd49d94943fcfcbff96ea203df4c29ea7ea19c8`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/commit/2fd49d94943fcfcbff96ea203df4c29ea7ea19c8)
+- **Workflow Run ID:** [`40123915617`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/actions/runs/40123915617)
+- **Trigger Event:** `push` to `main`
+- **Workflow Status:** `completed`
+- **Workflow Conclusion:** `success` (**100% PASS across all 4 jobs**)
+
+| Job Name | Environment / Runner | Duration | Conclusion | Key Checks Verified |
+|---|---|---|:---:|---|
+| **Frontend Build, Lint & Test** | Ubuntu / Node 24 | 21s | **SUCCESS** | Clean `npm ci`, 0 oxlint errors across 54 files, 88 Vitest tests passed, `vite build` production output |
+| **PostgreSQL Integration & Migration** | Ubuntu / PostgreSQL 16 / Python 3.11 | 48s | **SUCCESS** | Alembic migrations up to head (`e5f6a7b8c9d0`), relational integrity, database CRUD & rollback isolation |
+| **Docker Compose Runtime Verification** | Ubuntu / Docker / PostgreSQL 16 | 1m 40s | **SUCCESS** | Real multi-container build (`python:3.11-slim`, `node:24-alpine` + `nginx:1.27-alpine`), health checks, unauthenticated 401s, user signup (201), JWT auth, in-container Chromium PDF export, database volume persistence across restart |
+| **Backend Test Suite** | Ubuntu / Python 3.11 | 2m 07s | **SUCCESS** | Full pytest regression suite across quantitative algorithms, Black-Litterman, HRP, DSR/CSCV/PBO, PDF generator, and REST APIs |
+
 ---
 
 ## 5. Phase E — Release Checklist for Tagging & Publication
