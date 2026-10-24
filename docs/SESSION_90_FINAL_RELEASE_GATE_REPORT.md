@@ -4,7 +4,10 @@
 **Repository:** `https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii.git`
 **Working Directory:** `d:\Quants\Projects\quant-portfolio-engine-starter`
 **Branch:** `main`
-**Audited HEAD Commit:** [`64c9e5d`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/commit/64c9e5d) — `docs(session-89): record release readiness review and version 1.0.0 finalization plan`
+**Audited HEAD Commit:** [`6a670ba`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/commit/6a670ba) — `test(pdf): increase test_render_html_to_pdf_basic timeout to 30s for CI headroom`
+**Preceding Documented Commits:**
+- [`0d8e86a`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/commit/0d8e86a) — `docs(session-90): record final release gate review and version 1.0.0 release plan`
+- [`64c9e5d`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/commit/64c9e5d) — `docs(session-89): record release readiness review and version 1.0.0 finalization plan`
 **Current Application Version:** `0.7.0` (strictly preserved across all packaging manifests; zero tags created)
 **Session Verdict:** **READY FOR OWNER AUTHORIZATION**
 
@@ -12,17 +15,20 @@
 
 ## 1. Executive Summary & Verdict
 
-Session 90 conducts the final release approval gate audit for the Quantitative Portfolio Optimization Engine (`QPE`). This audit independently validates the continuous integration telemetry from Session 89, verifies repository and tag invariants, confirms complete operational and mathematical readiness, and formalizes the exact Version 1.0.0 release finalization plan.
+Session 90 conducts the final release approval gate audit for the Quantitative Portfolio Optimization Engine (`QPE`). This audit independently validates continuous integration telemetry, conducts root-cause remediation of a cold-start test timeout discovered on shared CI runners, verifies repository and tag invariants, confirms complete operational and mathematical readiness, and formalizes the exact Version 1.0.0 release finalization plan.
 
 ### Key Audit Findings
 1. **Repository Synchronization & Invariants:**
    - The active working tree is clean on branch `main` and strictly synchronized with `origin/main`.
-   - Baseline commit [`64c9e5d`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/commit/64c9e5d) is verified in Git history.
+   - Current HEAD commit [`6a670ba`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/commit/6a670ba) is verified in Git history.
    - Zero local Git tags and zero remote Git tags exist (`git tag -l` and `git ls-remote --tags` are empty).
    - Zero GitHub releases exist (confirmed via GitHub REST API).
-2. **Automated CI Telemetry (Run `40113750984` on Commit `64c9e5d`):**
-   - GitHub Actions workflow run [`40113750984`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/actions/runs/40113750984) achieved **100% SUCCESS** across all 4 required jobs.
-   - No newer workflow runs exist on `main`.
+2. **Automated CI Telemetry & Investigation:**
+   - Run [`40113750984`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/actions/runs/40113750984) on commit `64c9e5d` achieved **100% SUCCESS** across all 4 jobs.
+   - Run `40114659781` on commit `0d8e86a` experienced a single test failure in `backend-tests`: `test_render_html_to_pdf_basic` timed out at 15.0s during headless Chromium cold-start on a shared GitHub Actions runner.
+   - Root cause was investigated via check-run annotations and downloaded job logs. The test had an artificially tight `timeout_seconds=15.0` parameter that differed from the rest of the test suite and the system default (`DEFAULT_RENDER_TIMEOUT_SECONDS = 25.0`).
+   - A minimal, scoped fix was applied in commit [`6a670ba`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/commit/6a670ba) (`test(pdf): increase test_render_html_to_pdf_basic timeout to 30s for CI headroom`).
+   - Workflow run [`40115373258`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/actions/runs/40115373258) on commit `6a670ba` completed with **100% SUCCESS** across all 4 jobs.
 3. **Multi-Container Packaging & Runtime Verification:**
    - Real Docker images (`quant_portfolio_backend`, `quant_portfolio_frontend`) and PostgreSQL 16 container startup validated on Linux runners.
    - Alembic schema migrations up to head (`e5f6a7b8c9d0`) verified.
@@ -44,8 +50,8 @@ An independent inspection of the Git repository confirmed the following baseline
 |---|---|---|:---:|
 | **Active Branch** | `git status` | `On branch main; Your branch is up to date with 'origin/main'` | **SYNCHRONIZED** |
 | **Working Tree State** | `git status` | `nothing to commit, working tree clean` | **PRISTINE** |
-| **HEAD Commit SHA** | `git log -n 1 --format="%H"` | `64c9e5d38629510b3c623984ac9e55bcd41b38ca` | **VERIFIED** |
-| **Commit Message** | `git log -n 1 --format="%s"` | `docs(session-89): record release readiness review and version 1.0.0 finalization plan` | **MATCHED** |
+| **HEAD Commit SHA** | `git log -n 1 --format="%H"` | `6a670ba5e7d5885fbf803b9b47e2f50bfbb87103` | **VERIFIED** |
+| **Commit Message** | `git log -n 1 --format="%s"` | `test(pdf): increase test_render_html_to_pdf_basic timeout to 30s for CI headroom` | **MATCHED** |
 | **Local Git Tags** | `git tag -l` | *(No output; 0 tags found)* | **CLEAN (0 Tags)** |
 | **Remote Git Tags** | `git ls-remote --tags origin` | *(No output; 0 remote tags found)* | **CLEAN (0 Tags)** |
 | **GitHub Releases** | GitHub API `/repos/.../releases` | HTTP 200, count: 0 (`[]`) | **CLEAN (0 Releases)** |
@@ -53,28 +59,38 @@ An independent inspection of the Git repository confirmed the following baseline
 
 ---
 
-## 3. Phase B — GitHub Actions Continuous Integration Audit
+## 3. Phase B — GitHub Actions Continuous Integration Audit & Remediation
 
-Workflow run [`40113750984`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/actions/runs/40113750984) triggered by commit [`64c9e5d`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/commit/64c9e5d) was inspected via the GitHub Actions REST API.
+### 3.1 Telemetry Overview of Recent Runs
 
-- **Run ID:** `40113750984`
-- **Trigger Event:** `push` (to `main`)
-- **Status:** `completed`
-- **Conclusion:** `success`
-- **Created At:** `2026-10-24T16:55:07Z`
-- **Updated At:** `2026-10-24T16:57:28Z`
-- **Total Duration:** 2 minutes 21 seconds
+1. **Run [`40113750984`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/actions/runs/40113750984) (Commit `64c9e5d`):**
+   - **Conclusion:** `success` across all 4 jobs (Frontend 22s, Postgres 48s, Docker Compose 1m 49s, Backend 2m 18s).
+2. **Run `40114659781` (Commit `0d8e86a`):**
+   - **Conclusion:** `failure` (3 jobs succeeded; `backend-tests` failed on `test_render_html_to_pdf_basic`).
+   - **Root Cause Analysis:** Headless Chromium cold-start on a shared, I/O-contended Ubuntu runner exceeded the hardcoded `15.0s` timeout:
+     ```
+     FAILED tests/test_pdf_renderer.py::test_render_html_to_pdf_basic - TimeoutError: PDF rendering exceeded timeout of 15.0s.
+     ============ 1 failed, 662 passed, 30 warnings in 116.13s (0:01:56) ============
+     ```
+   - **Remediation:** In `backend/tests/test_pdf_renderer.py`, updated line 330 from `timeout_seconds=15.0` to `timeout_seconds=30.0` to provide adequate headroom matching production defaults (`DEFAULT_RENDER_TIMEOUT_SECONDS = 25.0`). Pushed in commit `6a670ba`.
+3. **Run [`40115373258`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/actions/runs/40115373258) (Commit `6a670ba` — Current HEAD):**
+   - **Trigger Event:** `push` (to `main`)
+   - **Status:** `completed`
+   - **Conclusion:** `success`
+   - **Created At:** `2026-10-24T17:16:30Z`
+   - **Completed At:** `2026-10-24T17:18:46Z`
+   - **Total Duration:** 2 minutes 16 seconds
 
-### Job Breakdown & Verification
+### 3.2 Current HEAD Job Breakdown & Verification (Run `40115373258`)
 
-| Job Name | Job ID | Duration | Conclusion | Key Verified Capabilities |
-|---|:---:|:---:|:---:|---|
-| **Frontend Build, Lint & Test (Node 24)** | `120930641462` | 22s | **SUCCESS** | Clean `npm ci`; 0 oxlint errors; 88 Vitest tests passed across 5 suites; `vite build` completed |
-| **PostgreSQL Integration & Migration (PostgreSQL 16)** | `120930641464` | 48s | **SUCCESS** | `postgres:16-alpine` service container; Alembic migration to `e5f6a7b8c9d0`; 3 integration tests passed |
-| **Docker Compose Runtime Verification (Docker / PostgreSQL 16)** | `120930641478` | 1m 49s | **SUCCESS** | Multi-container Compose build; detached startup; service health checks; schema verification; smoke tests; headless Chromium PDF export; volume persistence across restart |
-| **Backend Test Suite (Python 3.11)** | `120930641381` | 2m 18s | **SUCCESS** | 663 pytest tests passed (3 PostgreSQL tests cleanly skipped on non-DB runner; executed in dedicated DB jobs) |
+| Job Name | Status | Conclusion | Started At | Completed At | Duration | Key Verified Capabilities |
+|---|:---:|:---:|:---:|:---:|:---:|---|
+| **Frontend Build, Lint & Test (Node 24)** | completed | **SUCCESS** | 17:16:31Z | 17:16:51Z | 20s | Clean `npm ci`; 0 oxlint errors; 88 Vitest tests passed across 5 suites; `vite build` completed |
+| **PostgreSQL Integration & Migration (PostgreSQL 16)** | completed | **SUCCESS** | 17:16:32Z | 17:17:22Z | 50s | `postgres:16-alpine` service container; Alembic migration to `e5f6a7b8c9d0`; 3 integration tests passed |
+| **Docker Compose Runtime Verification (Docker / PostgreSQL 16)** | completed | **SUCCESS** | 17:16:32Z | 17:18:20Z | 1m 48s | Multi-container Compose build; detached startup; service health checks; schema verification; smoke tests; headless Chromium PDF export; volume persistence across restart |
+| **Backend Test Suite (Python 3.11)** | completed | **SUCCESS** | 17:16:31Z | 17:18:46Z | 2m 15s | 663 pytest tests passed (3 PostgreSQL tests cleanly skipped on non-DB runner; executed in dedicated DB jobs) |
 
-No subsequent workflow runs have been triggered; commit `64c9e5d` remains the latest verified commit on `main`.
+Commit `6a670ba` is the latest commit on `main`. All 4 jobs are 100% green.
 
 ---
 
@@ -112,7 +128,7 @@ An evaluation of prior session documentation ([`docs/SESSION_89_RELEASE_READINES
 
 **Justification:**
 1. **Mathematical & Research Correctness:** Stages 1–34 quantitative engines (Markowitz, Risk Parity, Black-Litterman, Copula tail risk, regime switching, DSR, CSCV, PBO, Fact Sheet, Tear Sheet) pass 663 unit and regression tests with zero test suite regressions.
-2. **Automated Continuous Integration:** 100% green CI baseline achieved across all 4 jobs on the latest commit on `main`.
+2. **Automated Continuous Integration:** 100% green CI baseline achieved across all 4 jobs on the latest commit on `main` (`6a670ba`, Run ID `40115373258`).
 3. **Packaging Integrity:** Real container images build cleanly and pass multi-service runtime verification, including health checks, database migrations, authentication, PDF rendering, and volume persistence.
 4. **Security Hardening:** Production JWT secret validation, loopback port bindings, and non-root execution are fully implemented and verified.
 5. **Zero Tag / Zero Release State:** Git history is clean and ready for an atomic `v1.0.0` release tag.
@@ -221,7 +237,7 @@ gh release create v1.0.0 \
 ## 7. Artifacts Created & Updated
 
 1. [`docs/SESSION_90_FINAL_RELEASE_GATE_REPORT.md`](file:///d:/Quants/Projects/quant-portfolio-engine-starter/docs/SESSION_90_FINAL_RELEASE_GATE_REPORT.md): Complete release gate review and Version 1.0.0 execution plan.
-2. [`docs/MASTER_PLAN.md`](file:///d:/Quants/Projects/quant-portfolio-engine-starter/docs/MASTER_PLAN.md): Updated with Session 90 audit results and release approval gate status.
+2. [`docs/MASTER_PLAN.md`](file:///d:/Quants/Projects/quant-portfolio-engine-starter/docs/MASTER_PLAN.md): Updated with Session 90 audit results, test timeout remediation, and release approval gate status.
 
 ---
 
