@@ -99,6 +99,10 @@ const pageTitles: Record<NavItem, { title: string; subtitle: string }> = {
     title: 'System Health & Registry Architecture',
     subtitle: 'Inspect backend health, stage milestones, memory lifecycle, and assumptions.',
   },
+  reports: {
+    title: 'Institutional Reports & PDF Export',
+    subtitle: 'Publication-ready strategy tear sheets, allocator fact sheets, and institutional PDF dossiers.',
+  },
 };
 
 export const Header: React.FC<HeaderProps> = ({ currentNav, onNavigate, onToggleSidebar }) => {

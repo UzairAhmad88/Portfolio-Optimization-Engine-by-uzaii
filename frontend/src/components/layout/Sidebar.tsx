@@ -21,7 +21,8 @@ import {
   Activity,
   Network,
   Server,
-  ChevronRight
+  ChevronRight,
+  FileText
 } from 'lucide-react';
 
 export type NavItem =
@@ -36,6 +37,7 @@ export type NavItem =
   | 'scenario-analysis'
   | 'monte-carlo'
   | 'performance'
+  | 'reports'
   | 'research-lab'
   | 'robust-optimization'
   | 'black-litterman'
@@ -68,6 +70,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentNav, onNavigate, isOpen
     { id: 'scenario-analysis', label: 'Scenario & Stress', icon: Zap },
     { id: 'monte-carlo', label: 'Monte Carlo Risk', icon: Dice5 },
     { id: 'performance', label: 'Attribution & Benchmarks', icon: Award },
+    { id: 'reports', label: 'Reports', icon: FileText },
     { id: 'research-lab', label: 'Research Lab', icon: FlaskConical },
     { id: 'robust-optimization', label: 'Robust Optimization', icon: Scale },
     { id: 'black-litterman', label: 'Black-Litterman', icon: Layers },

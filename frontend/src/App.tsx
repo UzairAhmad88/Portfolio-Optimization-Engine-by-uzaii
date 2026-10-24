@@ -24,6 +24,7 @@ import { ExecutionPage } from './components/pages/ExecutionPage';
 import { RegimeSwitchingPage } from './components/pages/RegimeSwitchingPage';
 import { BrinsonAttributionPage } from './components/pages/BrinsonAttributionPage';
 import { CopulaTailRiskPage } from './components/pages/CopulaTailRiskPage';
+import { ReportsPage } from './components/pages/ReportsPage';
 import { SystemInfoPage } from './components/pages/SystemInfoPage';
 import { AuthPage } from './components/auth/AuthPage';
 import type { PortfolioDefinition } from './types/api';
@@ -81,6 +82,8 @@ const MainApp: React.FC = () => {
         return <MonteCarloPage initialPortfolio={activePortfolio} />;
       case 'performance':
         return <PerformancePage initialPortfolio={activePortfolio} />;
+      case 'reports':
+        return <ReportsPage />;
       case 'research-lab':
         return <ResearchLabPage />;
       case 'robust-optimization':
