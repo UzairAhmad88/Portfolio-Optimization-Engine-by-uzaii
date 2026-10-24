@@ -96,6 +96,16 @@ New dedicated test suite: [`backend/tests/test_production_configuration_hardenin
 - Frontend linter (oxlint): **0 errors across 54 files**
 - Frontend build (`tsc -b && vite build`): **Built in 1.53s**
 
+### GitHub Actions CI Verification (Run ID `40128071107`)
+Target SHA: [`2dd157ab2544608feba7f25da182783d946d5907`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/commit/2dd157ab2544608feba7f25da182783d946d5907)
+
+| Job | Duration | Result | Key Checks Verified |
+|---|---|:---:|---|
+| **Frontend Build, Lint & Test (Node 24)** | 22s | **SUCCESS** | Clean `npm ci`, 0 oxlint errors, 88 Vitest tests passed, Vite production build |
+| **PostgreSQL Integration & Migration (PostgreSQL 16)** | 49s | **SUCCESS** | Alembic migrations up to head (`e5f6a7b8c9d0`), 7 PostgreSQL integration tests passed |
+| **Docker Compose Runtime Verification (Docker / PostgreSQL 16)** | 1m 47s | **SUCCESS** | Quoted variable syntax parsed, 3-tier container stack started, healthchecks 200, Alembic migrations verified, auth verified, Chromium PDF generation verified, database persistence verified across container restart |
+| **Backend Test Suite (Python 3.11)** | 2m 08s | **SUCCESS** | **702 passed tests** (including 39 production configuration hardening tests), 0 failures |
+
 ---
 
 ## 5. Phase E — Operations Runbook & Staging Guidance Updates
