@@ -1046,7 +1046,7 @@ def render_html_footer(envelope: CommonReportEnvelope) -> str:
             <div class="prov-col">
                 <span class="prov-label">Report Generation</span>
                 <span class="prov-val">{fmt_date(envelope.generated_at, include_time=True)}</span>
-                <span class="prov-digest">Engine: QPE Production v0.7.0</span>
+                <span class="prov-digest">Engine: QPE Production v1.0.0</span>
             </div>
         </div>
         <p class="report-disclaimer">

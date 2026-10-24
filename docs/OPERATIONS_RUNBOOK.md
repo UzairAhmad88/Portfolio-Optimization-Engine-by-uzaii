@@ -1,6 +1,6 @@
 # Quantitative Portfolio Optimization Engine — Operations Runbook
 
-- **Document Version:** `v0.7.0`
+- **Document Version:** `v1.0.0`
 - **Governing Stage:** Release Packaging, CI & Operational Readiness (Sessions 82–84)
 - **Target Environments:** Local Workstation (Windows / Linux / macOS) & Self-Hosted Docker Compose
 - **Classification:** Operational Governance & Administration Manual

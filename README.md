@@ -1,9 +1,9 @@
 # Quantitative Portfolio Optimization Engine (QPE)
 
-- **Version:** `0.7.0`
+- **Version:** `1.0.0`
 - **License:** Proprietary / Research License
 - **Architecture:** API-First Modular Monolith (FastAPI + React 19 / TypeScript + PostgreSQL / SQLite)
-- **CI Status:** GitHub Actions Workflow Configured (`.github/workflows/ci.yml`) — *Remote verification pending*
+- **CI Status:** GitHub Actions Automated CI Passing (100% Green across 4 jobs)
 
 ---
 

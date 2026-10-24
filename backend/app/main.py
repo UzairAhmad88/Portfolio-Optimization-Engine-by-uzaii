@@ -34,7 +34,7 @@ app = FastAPI(
         "Provides market data ingestion, persistent database storage, portfolio validation, "
         "constrained mean-variance optimization, efficient-frontier generation, and comparative risk analytics."
     ),
-    version="0.7.0",
+    version="1.0.0",
     lifespan=lifespan,
 )
 
