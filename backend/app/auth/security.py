@@ -89,6 +89,18 @@ def validate_jwt_configuration() -> None:
     get_jwt_secret_key()
 
 
+def validate_production_configuration() -> None:
+    """
+    Validates complete production security configuration at application startup:
+    1. Cryptographically validates JWT signing secret key.
+    2. Validates PostgreSQL connection string and database password.
+    Fails closed immediately if running in production with invalid or placeholder secrets.
+    """
+    from app.db.session import validate_database_configuration
+    validate_jwt_configuration()
+    validate_database_configuration()
+
+
 # Retained for backward compatibility with existing imports
 JWT_SECRET_KEY = DEV_JWT_SECRET_KEY
 

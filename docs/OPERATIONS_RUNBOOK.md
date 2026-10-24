@@ -198,42 +198,70 @@ docker compose down
 
 ---
 
-## Section D: Production Secret Management
+## Section D: Production Secret Management & Configuration Hardening
 
-### 1. Production JWT Security Rules (Session 83 Hardening)
+### 1. Production Security Rules & Fail-Closed Behavior (Session 83 & Session 96 Hardening)
 
-When `APP_ENV=production` or `ENVIRONMENT=production`, the application lifespan handler invokes `validate_jwt_configuration()`. The system **fails closed immediately at startup** under any of the following conditions:
+When `APP_ENV=production` or `ENVIRONMENT=production`, the application entrypoint (`backend/entrypoint.sh`) and FastAPI lifespan handler (`backend/app/main.py`) invoke `validate_production_configuration()`. The system **fails closed immediately at startup** (preventing database connection, migrations, or request processing) under any of the following conditions:
 
+#### JWT Signing Secret Rules
 1. `JWT_SECRET_KEY` is empty, unset, or whitespace-only.
 2. `JWT_SECRET_KEY` is shorter than **32 characters** (256-bit cryptographic entropy).
 3. `JWT_SECRET_KEY` matches any known development default or placeholder string (e.g., `quant_engine_dev_secret_key_...`, `change_me_...`, `password`, `changeme`).
 
-### 2. Generating a Cryptographically Secure Key
+#### PostgreSQL Database Credential Rules
+1. `DATABASE_URL` is empty, unset, or whitespace-only.
+2. `DATABASE_URL` specifies SQLite (SQLite is strictly prohibited in production; PostgreSQL is mandatory).
+3. `DATABASE_URL` or `POSTGRES_PASSWORD` lacks a database password.
+4. Database password is empty, blank, or whitespace-only.
+5. Database password matches any known default or placeholder string (e.g., `quant_password`, `quant_password_change_in_production`, `quant_ci_test_password_not_for_production`, `password`, `postgres`, `admin`, `root`, `changeme`).
+6. Database password is shorter than **8 characters**.
 
-Execute the following Python one-liner to generate a compliant 256-bit hexadecimal secret:
+### 2. Generating Cryptographically Secure Secrets
+
+Execute the following Python commands to generate compliant production credentials:
 
 ```bash
+# Generate 256-bit JWT signing secret:
 python -c "import secrets; print(secrets.token_hex(32))"
+
+# Generate strong PostgreSQL database password:
+python -c "import secrets; print(secrets.token_urlsafe(24))"
 ```
 
-Example compliant output format:
-`8f7c9e1d2b3a4c5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e`
+### 3. Production Preflight Configuration Validation
 
-### 3. Safe Injection into Production Environment
+Before starting services in production or staging, operators should run the offline configuration validator:
 
-- **Docker Compose:** Place `JWT_SECRET_KEY=<your_generated_key>` in the root `.env` file (ensure `.env` is listed in `.gitignore`).
-- **Systemd / Container Orchestrators:** Supply via system environment or secret management vaults (e.g., AWS Secrets Manager, HashiCorp Vault, Kubernetes Secrets).
-- **Prohibited Practice:** Never commit secrets to git, hardcode them in YAML files, or pass them on command lines visible in process tables (`ps aux`).
+```bash
+# In the backend environment with your configured environment variables:
+python -c "from app.auth.security import validate_production_configuration; validate_production_configuration(); print('Preflight security validation passed.')"
+```
 
-### 4. Secret Rotation & Operational Impact
+If any setting is invalid, the validator raises an informative `RuntimeError` identifying the invalid setting **without printing secret values**.
 
-- **Rotation Effect:** Changing `JWT_SECRET_KEY` immediately invalidates all existing user access tokens. Active users will receive HTTP 401 Unauthorized and must re-authenticate.
-- **Planned Rotation Procedure:**
-  1. Notify active research operators of the maintenance window.
-  2. Generate a new 256-bit secret.
-  3. Update `.env` or vault configuration.
-  4. Perform rolling restart: `docker compose restart backend`.
-  5. Verify health: `curl -I http://127.0.0.1:8000/api/v1/health`.
+### 4. Safe Injection into Production & Staging Environments
+
+- **Docker Compose:** Place `POSTGRES_PASSWORD=<strong_pwd>` and `JWT_SECRET_KEY=<strong_key>` in the root `.env` file. Ensure `.env` is listed in `.gitignore` and has strict file permissions (`chmod 600 .env`).
+- **Compose Interpolation Guard:** `docker-compose.yml` enforces `${POSTGRES_PASSWORD:?ERROR: POSTGRES_PASSWORD must be explicitly provided in environment or .env file}`, preventing silent fallback to default passwords.
+- **Systemd / Cloud Orchestrators:** Inject via environment variables or secret vaults (e.g., AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault, Kubernetes Secrets).
+- **CRITICAL WARNING:** NEVER commit `.env`, YAML configurations containing real credentials, or backup archives to Git. Never pass passwords on command lines visible in process tables (`ps aux`).
+
+### 5. Secret Rotation & Operational Impact
+
+- **JWT Secret Rotation:** Changing `JWT_SECRET_KEY` immediately invalidates all issued access tokens. Operators will receive HTTP 401 Unauthorized and must log in again.
+- **Database Password Rotation:**
+  1. Update user password in PostgreSQL: `ALTER USER quant_user WITH PASSWORD 'new_password';`.
+  2. Update `POSTGRES_PASSWORD` and `DATABASE_URL` in `.env` / vault.
+  3. Restart backend container: `docker compose restart backend`.
+  4. Verify health probe: `curl -fsS http://127.0.0.1:8000/api/v1/health`.
+
+### 6. Staging Prerequisites & Remaining Host Checks
+
+Before deploying to an external staging environment:
+1. **Upstream Reverse Proxy (TLS):** Provision an external reverse proxy (AWS ALB, Cloudflare, Caddy, or Nginx) terminating TLS on port 443 with valid SSL certificates.
+2. **Dedicated Staging Host:** Ensure the staging VM/instance has Docker 24+ and Compose v2 installed.
+3. **Backup Drill:** Verify automated or scripted database backups (`pg_dump -Fc`) and restore test to a staging sandbox before routing user traffic.
 
 ---
 

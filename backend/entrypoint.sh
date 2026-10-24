@@ -1,6 +1,14 @@
 #!/bin/sh
 set -e
 
+# Validate production security configuration (fails closed if insecure in production)
+echo "[entrypoint] Validating application configuration..."
+python -c "
+from app.auth.security import validate_production_configuration
+validate_production_configuration()
+"
+echo "[entrypoint] Configuration validation passed."
+
 # Wait for PostgreSQL database connectivity
 if [ -n "$DATABASE_URL" ]; then
     echo "[entrypoint] Waiting for database connection..."

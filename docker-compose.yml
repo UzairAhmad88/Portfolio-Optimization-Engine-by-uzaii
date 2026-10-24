@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-quant_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quant_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ERROR: POSTGRES_PASSWORD must be explicitly provided in environment or .env file}
       POSTGRES_DB: ${POSTGRES_DB:-quant_portfolio_db}
     ports:
       # Bound strictly to loopback interface to prevent public exposure
@@ -28,7 +28,7 @@ services:
     restart: unless-stopped
     environment:
       APP_ENV: ${APP_ENV:-production}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-quant_user}:${POSTGRES_PASSWORD:-quant_password}@postgres:5432/${POSTGRES_DB:-quant_portfolio_db}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://${POSTGRES_USER:-quant_user}:${POSTGRES_PASSWORD:?ERROR: POSTGRES_PASSWORD must be explicitly provided in environment or .env file}@postgres:5432/${POSTGRES_DB:-quant_portfolio_db}}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost,http://localhost:80,http://127.0.0.1,http://127.0.0.1:80}
       CHROME_BIN: /usr/bin/chromium

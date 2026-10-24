@@ -15,8 +15,8 @@ logger = logging.getLogger("app.main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Validate production security configuration (fails closed if insecure in production)
-    from app.auth.security import validate_jwt_configuration
-    validate_jwt_configuration()
+    from app.auth.security import validate_production_configuration
+    validate_production_configuration()
 
     # Initialize database tables on application startup
     try:
