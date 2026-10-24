@@ -229,12 +229,48 @@ python -c "import secrets; print(secrets.token_hex(32))"
 python -c "import secrets; print(secrets.token_urlsafe(24))"
 ```
 
-### 3. Production Preflight Configuration Validation
+### 3. Production & Staging Preflight Configuration Validation
 
-Before starting services in production or staging, operators should run the offline configuration validator:
+Before starting services in staging or production, operators should execute the automated preflight verification suite.
+
+#### Option A: Comprehensive Staging Preflight Harness (Recommended)
+
+The Session 98 preflight harness evaluates 21 distinct repository, security, database, network, and operational controls, failing closed when mandatory requirements are missing:
+
+```powershell
+# Windows PowerShell (local or staging host):
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-staging-readiness.ps1
+
+# Structured JSON output for automated deployment gates:
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-staging-readiness.ps1 -Json
+
+# With live external staging endpoint probe and verified backup drill:
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\verify-staging-readiness.ps1 `
+    -StagingUrl "https://staging.quantengine.example.com" `
+    -LiveDbVerified `
+    -Environment staging
+```
 
 ```bash
-# In the backend environment with your configured environment variables:
+# Linux / macOS / CI (cross-platform Python module):
+python -m app.ops.staging_preflight
+
+# Structured JSON output:
+python -m app.ops.staging_preflight --json
+
+# With live staging probes:
+python -m app.ops.staging_preflight \
+    --staging-url "https://staging.quantengine.example.com" \
+    --live-db-verified \
+    --env staging
+```
+
+#### Option B: Offline Secrets-Only Validator
+
+To test environment variables against fail-closed rules without repository-level checks:
+
+```bash
+# In the backend environment with configured environment variables:
 python -c "from app.auth.security import validate_production_configuration; validate_production_configuration(); print('Preflight security validation passed.')"
 ```
 
