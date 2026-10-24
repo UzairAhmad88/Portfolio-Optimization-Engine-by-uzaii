@@ -52,12 +52,15 @@ if (-not $PythonExe) {
 $PreflightModule = "app.ops.staging_preflight"
 $BackendDir = Join-Path $RepoRoot "backend"
 
-$ArgsList = @("-m", $PreflightModule, "--repo-root", $RepoRoot, "--env", $Environment)
+$ArgsList = @("-m", $PreflightModule, "--repo-root", "`"$RepoRoot`"", "--env", "`"$Environment`"")
 if ($StagingUrl) {
-    $ArgsList += @("--staging-url", $StagingUrl)
+    $ArgsList += @("--staging-url", "`"$StagingUrl`"")
 }
 if ($LiveDbVerified) {
     $ArgsList += "--live-db-verified"
+}
+if ($Strict) {
+    $ArgsList += "--strict"
 }
 if ($Json) {
     $ArgsList += "--json"

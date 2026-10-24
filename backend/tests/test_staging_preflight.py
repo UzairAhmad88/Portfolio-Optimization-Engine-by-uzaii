@@ -217,7 +217,7 @@ def test_backup_and_restore_not_verified_reported_as_blocked(repo_root: Path):
     chk_c4 = next(c for c in report.checks if c.id == "C4_LIVE_BACKUP_RESTORE_VERIFIED")
     assert chk_c4.status == CheckStatus.BLOCKED
     assert chk_c4.is_mandatory is True
-    assert "cannot be verified in preflight" in chk_c4.evidence
+    assert "Live staging database has not been provisioned" in chk_c4.evidence
 
 
 # -----------------------------------------------------------------------------
@@ -365,3 +365,300 @@ def test_report_formatting_and_json(repo_root: Path):
     report_dict = report.to_dict()
     assert report_dict["verdict"] == report.verdict.value
     assert len(report_dict["checks"]) == len(report.checks)
+
+
+# =============================================================================
+# SESSION 99 AUDIT REGRESSION TESTS (DEFECT-99-01 through DEFECT-99-08)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Audit Test 1: Verdict Precedence & Fail-Closed Rules
+# -----------------------------------------------------------------------------
+def test_empty_checks_fails_closed():
+    """An empty or uninitialized checks list must fail closed deterministically."""
+    runner = StagingPreflightRunner()
+    runner.checks = []
+    # If run_all is called on runner with empty checks
+    with patch.object(runner, "_check_category_a_repository"), \
+         patch.object(runner, "_check_category_b_secrets"), \
+         patch.object(runner, "_check_category_c_database"), \
+         patch.object(runner, "_check_category_d_network"), \
+         patch.object(runner, "_check_category_e_operational_safeguards"):
+        report = runner.run_all()
+        assert report.verdict == OverallVerdict.FAIL
+
+
+def test_verdict_mandatory_fail_precedence_over_blocked():
+    """Mandatory FAIL must take absolute precedence over BLOCKED."""
+    runner = StagingPreflightRunner()
+    with patch.object(runner, "_check_category_a_repository", lambda: runner.checks.append(
+        PreflightCheck(id="CHK1", category="Cat", title="Mandatory Fail", status=CheckStatus.FAIL, is_mandatory=True, evidence="Failed")
+    )), patch.object(runner, "_check_category_b_secrets", lambda: runner.checks.append(
+        PreflightCheck(id="CHK2", category="Cat", title="Mandatory Blocked", status=CheckStatus.BLOCKED, is_mandatory=True, evidence="Blocked")
+    )), patch.object(runner, "_check_category_c_database", lambda: None), \
+       patch.object(runner, "_check_category_d_network", lambda: None), \
+       patch.object(runner, "_check_category_e_operational_safeguards", lambda: None):
+        report = runner.run_all()
+        assert report.verdict == OverallVerdict.FAIL
+
+
+def test_verdict_mandatory_warning_causes_fail():
+    """A mandatory check that evaluates to WARNING must escalate to FAIL."""
+    runner = StagingPreflightRunner()
+    with patch.object(runner, "_check_category_a_repository", lambda: runner.checks.append(
+        PreflightCheck(id="CHK1", category="Cat", title="Mandatory Warning", status=CheckStatus.WARNING, is_mandatory=True, evidence="Warning on mandatory")
+    )), patch.object(runner, "_check_category_b_secrets", lambda: None), \
+       patch.object(runner, "_check_category_c_database", lambda: None), \
+       patch.object(runner, "_check_category_d_network", lambda: None), \
+       patch.object(runner, "_check_category_e_operational_safeguards", lambda: None):
+        report = runner.run_all()
+        assert report.verdict == OverallVerdict.FAIL
+
+
+def test_strict_mode_escalates_advisory_warning_to_fail(repo_root: Path):
+    """In --strict mode, advisory warnings escalate to FAIL; in non-strict mode they remain visible."""
+    with patch("shutil.which", return_value="/usr/bin/docker"), \
+         patch("subprocess.run") as mock_subproc, \
+         patch("urllib.request.urlopen") as mock_url:
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_subproc.return_value = mock_res
+        mock_resp = MagicMock()
+        mock_resp.getcode.return_value = 200
+        mock_url.return_value.__enter__.return_value = mock_resp
+
+        # Non-strict mode: Advisory warnings (e.g. E3, E4, E5, E7) allow READY
+        runner_normal = StagingPreflightRunner(
+            repo_root=repo_root,
+            staging_url="https://staging.quantengine.internal",
+            live_db_verified=True,
+            strict=False,
+        )
+        report_normal = runner_normal.run_all()
+        assert report_normal.verdict == OverallVerdict.READY
+
+        # Strict mode: Advisory warnings cause overall FAIL
+        runner_strict = StagingPreflightRunner(
+            repo_root=repo_root,
+            staging_url="https://staging.quantengine.internal",
+            live_db_verified=True,
+            strict=True,
+        )
+        report_strict = runner_strict.run_all()
+        assert report_strict.verdict == OverallVerdict.FAIL
+
+
+# -----------------------------------------------------------------------------
+# Audit Test 2: Quoted Secret Masking & URI Variations
+# -----------------------------------------------------------------------------
+def test_redact_quoted_secrets_and_various_uris():
+    """Verify redaction handles quoted values, connection strings, bearer tokens, and JWTs."""
+    raw = (
+        'POSTGRES_PASSWORD="my_quoted_password_123"\n'
+        "POSTGRES_PASSWORD='single_quoted_password_456'\n"
+        "DATABASE_URL=postgresql://quant_admin:db_pass_789@db-host:5432/quant_portfolio_db\n"
+        "DATABASE_URL=postgresql+psycopg://app_user:psycopg_pass_abc@localhost:5432/prod_db\n"
+        "Connecting to postgresql://raw_user:raw_pass_xyz@10.0.0.5:5432/data\n"
+        "Authorization: Bearer header.payload.signature_xyz\n"
+        "Found token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c\n"
+    )
+    redacted = redact_sensitive_text(raw)
+
+    assert "my_quoted_password_123" not in redacted
+    assert "single_quoted_password_456" not in redacted
+    assert "db_pass_789" not in redacted
+    assert "psycopg_pass_abc" not in redacted
+    assert "raw_pass_xyz" not in redacted
+    assert "header.payload.signature_xyz" not in redacted
+    assert "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c" not in redacted
+
+    assert 'POSTGRES_PASSWORD="***REDACTED***"' in redacted
+    assert "POSTGRES_PASSWORD='***REDACTED***'" in redacted
+    assert "DATABASE_URL=***REDACTED***" in redacted
+    assert "Connecting to postgresql://raw_user:***REDACTED***@10.0.0.5:5432/data" in redacted
+
+
+# -----------------------------------------------------------------------------
+# Audit Test 3: Operator Attestation Evidence Clarity (C4)
+# -----------------------------------------------------------------------------
+def test_c4_live_backup_restore_attestation_clarity(repo_root: Path):
+    """When live_db_verified is True, report must explicitly state it is a manual attestation."""
+    runner = StagingPreflightRunner(repo_root=repo_root, live_db_verified=True)
+    report = runner.run_all()
+
+    chk_c4 = next(c for c in report.checks if c.id == "C4_LIVE_BACKUP_RESTORE_VERIFIED")
+    assert chk_c4.status == CheckStatus.PASS
+    assert "Operator Attested" in chk_c4.title
+    assert "MANUAL ATTESTATION" in chk_c4.evidence
+    assert "Not independently automated by preflight runner" in chk_c4.evidence
+
+
+# -----------------------------------------------------------------------------
+# Audit Test 4: Structured YAML Port Isolation Auditing (D1)
+# -----------------------------------------------------------------------------
+def test_port_isolation_rejects_unbound_and_public_ports(repo_root: Path):
+    """Structured YAML parsing in D1 must reject 0.0.0.0 or unbounded host ports."""
+    # Write a compose file exposing postgres to 0.0.0.0
+    (repo_root / "docker-compose.yml").write_text(
+        """services:
+  postgres:
+    ports:
+      - "0.0.0.0:5432:5432"
+  backend:
+    ports:
+      - "127.0.0.1:8000:8000"
+""",
+        encoding="utf-8",
+    )
+    runner = StagingPreflightRunner(repo_root=repo_root)
+    report = runner.run_all()
+
+    chk_d1 = next(c for c in report.checks if c.id == "D1_COMPOSE_PORT_ISOLATION")
+    assert chk_d1.status == CheckStatus.FAIL
+    assert "postgres_isolated=False" in chk_d1.evidence
+
+
+def test_port_isolation_rejects_unprefixed_ports(repo_root: Path):
+    """Compose file with '5432:5432' without host prefix must fail D1."""
+    (repo_root / "docker-compose.yml").write_text(
+        """services:
+  postgres:
+    ports:
+      - "5432:5432"
+  backend:
+    ports:
+      - "127.0.0.1:8000:8000"
+""",
+        encoding="utf-8",
+    )
+    runner = StagingPreflightRunner(repo_root=repo_root)
+    report = runner.run_all()
+
+    chk_d1 = next(c for c in report.checks if c.id == "D1_COMPOSE_PORT_ISOLATION")
+    assert chk_d1.status == CheckStatus.FAIL
+
+
+# -----------------------------------------------------------------------------
+# Audit Test 5: Subprocess Timeout & Exception Safety (A2, A4)
+# -----------------------------------------------------------------------------
+def test_git_diff_timeout_fails_safely(repo_root: Path):
+    """Subprocess timeout on git diff must be caught and recorded as FAIL."""
+    import subprocess
+    (repo_root / ".git").mkdir()
+    with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["git", "diff", "--check"], timeout=30.0)):
+        runner = StagingPreflightRunner(repo_root=repo_root)
+        report = runner.run_all()
+
+        chk_a2 = next(c for c in report.checks if c.id == "A2_GIT_DIFF_CHECK")
+        assert chk_a2.status == CheckStatus.FAIL
+        assert "timed out after 30 seconds" in chk_a2.evidence
+
+
+def test_compose_syntax_timeout_fails_safely(repo_root: Path):
+    """Subprocess timeout on docker compose config must be caught and recorded as FAIL."""
+    import subprocess
+    with patch("shutil.which", return_value="/usr/bin/docker"), \
+         patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd=["docker", "compose", "config"], timeout=30.0)):
+        runner = StagingPreflightRunner(repo_root=repo_root)
+        report = runner.run_all()
+
+        chk_a4 = next(c for c in report.checks if c.id == "A4_COMPOSE_SYNTAX_VALID")
+        assert chk_a4.status == CheckStatus.FAIL
+        assert "timed out after 30 seconds" in chk_a4.evidence
+
+
+def test_compose_syntax_cli_error_fails_mandatory_a4(repo_root: Path):
+    """Unexpected exception in docker compose config must record FAIL (not WARNING) on mandatory A4."""
+    with patch("shutil.which", return_value="/usr/bin/docker"), \
+         patch("subprocess.run", side_effect=RuntimeError("Docker daemon socket closed unexpectedly")):
+        runner = StagingPreflightRunner(repo_root=repo_root)
+        report = runner.run_all()
+
+        chk_a4 = next(c for c in report.checks if c.id == "A4_COMPOSE_SYNTAX_VALID")
+        assert chk_a4.status == CheckStatus.FAIL
+        assert chk_a4.is_mandatory is True
+        assert "Docker daemon socket closed unexpectedly" in chk_a4.evidence
+
+
+# -----------------------------------------------------------------------------
+# Audit Test 6: Staging URL Probe Integrity & Synchronization (D3 & E1)
+# -----------------------------------------------------------------------------
+def test_d3_malformed_or_non_https_url_fails(repo_root: Path):
+    """Invalid URL structures or schemes without hostname fail D3."""
+    runner = StagingPreflightRunner(repo_root=repo_root, staging_url="https://")
+    report = runner.run_all()
+    chk_d3 = next(c for c in report.checks if c.id == "D3_LIVE_EXTERNAL_TLS_VERIFIED")
+    assert chk_d3.status == CheckStatus.FAIL
+
+
+def test_d3_probe_http_500_fails_mandatory_d3(repo_root: Path):
+    """HTTP 500 error from staging probe must result in CheckStatus.FAIL."""
+    with patch("urllib.request.urlopen") as mock_url:
+        mock_resp = MagicMock()
+        mock_resp.getcode.return_value = 500
+        mock_url.return_value.__enter__.return_value = mock_resp
+
+        runner = StagingPreflightRunner(repo_root=repo_root, staging_url="https://staging.test.internal")
+        report = runner.run_all()
+
+        chk_d3 = next(c for c in report.checks if c.id == "D3_LIVE_EXTERNAL_TLS_VERIFIED")
+        assert chk_d3.status == CheckStatus.FAIL
+        assert chk_d3.is_mandatory is True
+        assert "returned unexpected HTTP status 500" in chk_d3.evidence
+
+
+def test_d3_probe_http_401_verifies_tls(repo_root: Path):
+    """HTTP 401 Basic Auth on staging gateway still verifies that TLS certificate handshake succeeded."""
+    import urllib.error
+    with patch("urllib.request.urlopen", side_effect=urllib.error.HTTPError(
+        url="https://staging.test.internal", code=401, msg="Unauthorized", hdrs={}, fp=None
+    )):
+        runner = StagingPreflightRunner(repo_root=repo_root, staging_url="https://staging.test.internal")
+        report = runner.run_all()
+
+        chk_d3 = next(c for c in report.checks if c.id == "D3_LIVE_EXTERNAL_TLS_VERIFIED")
+        assert chk_d3.status == CheckStatus.PASS
+        assert "TLS certificate verified" in chk_d3.evidence
+
+
+def test_e1_synchronization_with_d3_failure(repo_root: Path):
+    """When D3 probe fails, E1 (OPS-95-01) must FAIL rather than falsely reporting PASS."""
+    import urllib.error
+    with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Connection refused: [Errno 111]")):
+        runner = StagingPreflightRunner(repo_root=repo_root, staging_url="https://offline.staging.internal")
+        report = runner.run_all()
+
+        chk_d3 = next(c for c in report.checks if c.id == "D3_LIVE_EXTERNAL_TLS_VERIFIED")
+        chk_e1 = next(c for c in report.checks if c.id == "E1_RISK_OPS_95_01_EDGE_TLS")
+
+        assert chk_d3.status == CheckStatus.FAIL
+        assert chk_e1.status == CheckStatus.FAIL  # Synchronized! Never false-PASS
+        assert "Upstream reverse proxy probe failed" in chk_e1.evidence
+
+
+# -----------------------------------------------------------------------------
+# Audit Test 7: Mandatory Check Failure Classification (C3, D2)
+# -----------------------------------------------------------------------------
+def test_missing_backup_commands_in_runbook_fails_c3(repo_root: Path):
+    """Runbook missing backup commands must FAIL mandatory C3."""
+    (repo_root / "docs" / "OPERATIONS_RUNBOOK.md").write_text("# Incomplete Runbook\n", encoding="utf-8")
+    runner = StagingPreflightRunner(repo_root=repo_root)
+    report = runner.run_all()
+
+    chk_c3 = next(c for c in report.checks if c.id == "C3_BACKUP_COMMAND_ALIGNMENT")
+    assert chk_c3.status == CheckStatus.FAIL
+    assert chk_c3.is_mandatory is True
+
+
+def test_missing_tls_documentation_in_runbook_fails_d2(repo_root: Path):
+    """Runbook missing TLS reverse proxy documentation must FAIL mandatory D2."""
+    (repo_root / "docs" / "OPERATIONS_RUNBOOK.md").write_text(
+        "# Runbook\npg_dump -U quant_user quant_portfolio_db\npsql -U quant_user -d quant_portfolio_db\n",
+        encoding="utf-8",
+    )
+    runner = StagingPreflightRunner(repo_root=repo_root)
+    report = runner.run_all()
+
+    chk_d2 = next(c for c in report.checks if c.id == "D2_UPSTREAM_TLS_DOCUMENTED")
+    assert chk_d2.status == CheckStatus.FAIL
+    assert chk_d2.is_mandatory is True

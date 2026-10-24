@@ -25,10 +25,12 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
-import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -94,16 +96,45 @@ def redact_sensitive_text(text: str, custom_secrets: Sequence[str] | None = None
             if s and len(s) >= 4 and s in sanitized:
                 sanitized = sanitized.replace(s, "***REDACTED***")
 
-    # Mask common key=value patterns
-    patterns = [
-        r"(POSTGRES_PASSWORD\s*[:=]\s*)([^\s\"';]+)",
-        r"(JWT_SECRET_KEY\s*[:=]\s*)([^\s\"';]+)",
-        r"(password\s*[:=]\s*)([^\s\"';]+)",
-        r"(postgresql\+psycopg://[^:]+:)([^@]+)(@)",
-        r"(Bearer\s+)([A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_=]+\.?[A-Za-z0-9\-_=]*)",
-    ]
-    for p in patterns:
-        sanitized = re.sub(p, r"\1***REDACTED***\3" if r"\3" in p else r"\1***REDACTED***", sanitized, flags=re.IGNORECASE)
+    # Patterns for masking sensitive configuration values:
+    # 1. Quoted assignments: KEY="secret" or KEY='secret'
+    sanitized = re.sub(
+        r'((?:POSTGRES_PASSWORD|JWT_SECRET_KEY|DATABASE_URL|password|secret)\s*[:=]\s*["\'])([^"\']+)(["\'])',
+        r'\g<1>***REDACTED***\g<3>',
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+
+    # 2. Unquoted assignments: KEY=secret
+    sanitized = re.sub(
+        r'((?:POSTGRES_PASSWORD|JWT_SECRET_KEY|DATABASE_URL|password|secret)\s*[:=]\s*)([^\s"\';]+)',
+        r'\g<1>***REDACTED***',
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+
+    # 3. Database connection URIs: postgresql://user:password@host:port/db or postgresql+driver://...
+    sanitized = re.sub(
+        r'(postgres(?:ql)?(?:\+[a-zA-Z0-9_-]+)?://[^:]+:)([^@]+)(@)',
+        r'\g<1>***REDACTED***\g<3>',
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+
+    # 4. Bearer tokens: Bearer <token>
+    sanitized = re.sub(
+        r'(Bearer\s+)([A-Za-z0-9\-_=]+\.[A-Za-z0-9\-_=]+\.?[A-Za-z0-9\-_=]*)',
+        r'\g<1>***REDACTED***',
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+
+    # 5. Standalone JWT-shaped tokens (3 dot-separated base64url segments)
+    sanitized = re.sub(
+        r'\b(ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b',
+        r'***REDACTED_JWT***',
+        sanitized,
+    )
 
     return sanitized
 
@@ -121,6 +152,7 @@ class StagingPreflightRunner:
         live_db_verified: bool = False,
         target_env: str = "staging",
         custom_env: Dict[str, str] | None = None,
+        strict: bool = False,
     ):
         if repo_root is None:
             # Default to repo root relative to this file
@@ -134,6 +166,7 @@ class StagingPreflightRunner:
         self.live_db_verified = live_db_verified
         self.target_env = target_env
         self.env = custom_env if custom_env is not None else dict(os.environ)
+        self.strict = strict
         self.checks: List[PreflightCheck] = []
 
     def run_all(self) -> PreflightReport:
@@ -155,16 +188,28 @@ class StagingPreflightRunner:
         for c in self.checks:
             counts[c.status.value] = counts.get(c.status.value, 0) + 1
 
-        # Evaluate verdict
-        has_mandatory_fail = any(c.status == CheckStatus.FAIL and c.is_mandatory for c in self.checks)
-        has_mandatory_blocked = any(c.status == CheckStatus.BLOCKED and c.is_mandatory for c in self.checks)
-
-        if has_mandatory_fail:
+        # Evaluate verdict deterministically:
+        # 1. Empty or incomplete check list must fail closed
+        if not self.checks or not any(c.is_mandatory for c in self.checks):
             verdict = OverallVerdict.FAIL
-        elif has_mandatory_blocked:
-            verdict = OverallVerdict.BLOCKED
         else:
-            verdict = OverallVerdict.READY
+            has_mandatory_fail = any(c.status == CheckStatus.FAIL and c.is_mandatory for c in self.checks)
+            has_mandatory_blocked = any(c.status == CheckStatus.BLOCKED and c.is_mandatory for c in self.checks)
+            has_mandatory_warning = any(c.status == CheckStatus.WARNING and c.is_mandatory for c in self.checks)
+            has_strict_warning = self.strict and any(c.status == CheckStatus.WARNING for c in self.checks)
+
+            if has_mandatory_fail or has_mandatory_warning or has_strict_warning:
+                verdict = OverallVerdict.FAIL
+            elif has_mandatory_blocked:
+                verdict = OverallVerdict.BLOCKED
+            else:
+                # To be READY, every mandatory check must be PASS or explicitly justified NOT_APPLICABLE
+                all_mandatory_satisfied = all(
+                    c.status in (CheckStatus.PASS, CheckStatus.NOT_APPLICABLE)
+                    for c in self.checks
+                    if c.is_mandatory
+                )
+                verdict = OverallVerdict.READY if all_mandatory_satisfied else OverallVerdict.FAIL
 
         return PreflightReport(
             target_env=self.target_env,
@@ -227,6 +272,7 @@ class StagingPreflightRunner:
                     stderr=subprocess.PIPE,
                     text=True,
                     check=False,
+                    timeout=30.0,
                 )
                 if res.returncode == 0:
                     self.checks.append(PreflightCheck(
@@ -248,6 +294,16 @@ class StagingPreflightRunner:
                         evidence=f"git diff --check reported violations: {err_snippet[:200]}",
                         remediation="Resolve trailing whitespace or conflicting line endings before deploying.",
                     ))
+            except subprocess.TimeoutExpired:
+                self.checks.append(PreflightCheck(
+                    id="A2_GIT_DIFF_CHECK",
+                    category="Repository & Configuration",
+                    title="Git Whitespace & Formatting Hygiene",
+                    status=CheckStatus.FAIL,
+                    is_mandatory=True,
+                    evidence="git diff --check timed out after 30 seconds.",
+                    remediation="Check for Git lock files or system I/O hangs.",
+                ))
             except Exception as e:
                 self.checks.append(PreflightCheck(
                     id="A2_GIT_DIFF_CHECK",
@@ -324,6 +380,7 @@ class StagingPreflightRunner:
                         stderr=subprocess.PIPE,
                         text=True,
                         check=False,
+                        timeout=30.0,
                     )
                     if res.returncode == 0:
                         self.checks.append(PreflightCheck(
@@ -345,14 +402,25 @@ class StagingPreflightRunner:
                             evidence=f"docker compose config failed: {redact_sensitive_text(err_out[:250])}",
                             remediation="Verify Compose parameter interpolation and ensure required environment variables exist.",
                         ))
+                except subprocess.TimeoutExpired:
+                    self.checks.append(PreflightCheck(
+                        id="A4_COMPOSE_SYNTAX_VALID",
+                        category="Repository & Configuration",
+                        title="Docker Compose Syntax & Interpolation Validation",
+                        status=CheckStatus.FAIL,
+                        is_mandatory=True,
+                        evidence="docker compose config command timed out after 30 seconds.",
+                        remediation="Check for hanging Docker daemon or Compose process.",
+                    ))
                 except Exception as e:
                     self.checks.append(PreflightCheck(
                         id="A4_COMPOSE_SYNTAX_VALID",
                         category="Repository & Configuration",
                         title="Docker Compose Syntax & Interpolation Validation",
-                        status=CheckStatus.WARNING,
+                        status=CheckStatus.FAIL,
                         is_mandatory=True,
-                        evidence=f"YAML is valid; Docker Compose CLI check encountered exception: {e}",
+                        evidence=f"YAML is valid; Docker Compose CLI check encountered error: {e}",
+                        remediation="Verify Docker Compose installation and system permissions.",
                     ))
             else:
                 self.checks.append(PreflightCheck(
@@ -702,7 +770,7 @@ class StagingPreflightRunner:
                     id="C3_BACKUP_COMMAND_ALIGNMENT",
                     category="Database & Migration Readiness",
                     title="Operational Backup & Restore Command Audit",
-                    status=CheckStatus.WARNING,
+                    status=CheckStatus.FAIL,
                     is_mandatory=True,
                     evidence="Runbook is missing complete pg_dump or pg_restore reference.",
                     remediation="Update docs/OPERATIONS_RUNBOOK.md Section B with exact backup and restore commands.",
@@ -720,26 +788,26 @@ class StagingPreflightRunner:
                 risk_id="OPS-95-03",
             ))
 
-        # C4: Live backup and restore verification
+        # C4: Live backup and restore verification (Manual Operator Attestation)
         if self.live_db_verified:
             self.checks.append(PreflightCheck(
                 id="C4_LIVE_BACKUP_RESTORE_VERIFIED",
                 category="Database & Migration Readiness",
-                title="Live Staging Database Backup & Restore Verification",
+                title="Live Staging Database Backup & Restore Verification (Operator Attested)",
                 status=CheckStatus.PASS,
                 is_mandatory=True,
-                evidence="Live database backup and restore drill was executed successfully on staging host.",
+                evidence="MANUAL ATTESTATION: Operator asserted that Test 11 (pg_dump & pg_restore sandbox drill) was verified on the live staging database. (Note: Not independently automated by preflight runner)",
                 risk_id="OPS-95-03",
             ))
         else:
             self.checks.append(PreflightCheck(
                 id="C4_LIVE_BACKUP_RESTORE_VERIFIED",
                 category="Database & Migration Readiness",
-                title="Live Staging Database Backup & Restore Verification",
+                title="Live Staging Database Backup & Restore Verification (Operator Attested)",
                 status=CheckStatus.BLOCKED,
                 is_mandatory=True,
-                evidence="Live staging database has not been provisioned on an external host; backup/restore drill cannot be verified in preflight.",
-                remediation="Once staging host is provisioned, execute Test 11 (pg_dump & pg_restore sandbox drill) from Session 97.",
+                evidence="Live staging database has not been provisioned on an external host or verified by operator; backup/restore drill is BLOCKED.",
+                remediation="Once staging host is provisioned, execute Test 11 (pg_dump & pg_restore sandbox drill) from Session 97 and provide --live-db-verified operator attestation.",
                 risk_id="OPS-95-03",
             ))
 
@@ -749,31 +817,80 @@ class StagingPreflightRunner:
     def _check_category_d_network(self) -> None:
         # D1: Port isolation in Compose
         compose_path = self.repo_root / "docker-compose.yml"
-        if compose_path.is_file():
-            compose_text = compose_path.read_text(encoding="utf-8")
-            postgres_loopback = bool(re.search(r'["\']127\.0\.0\.1:5432:5432["\']', compose_text))
-            backend_loopback = bool(re.search(r'["\']127\.0\.0\.1:8000:8000["\']', compose_text))
-            public_postgres = bool(re.search(r'["\']0\.0\.0\.0:5432["\']|["\']5432:5432["\']', compose_text))
+        if not compose_path.is_file():
+            self.checks.append(PreflightCheck(
+                id="D1_COMPOSE_PORT_ISOLATION",
+                category="Network & HTTPS Prerequisites",
+                title="Database & Backend Loopback Port Isolation",
+                status=CheckStatus.FAIL,
+                is_mandatory=True,
+                evidence="docker-compose.yml does not exist.",
+                remediation="Ensure docker-compose.yml exists in repository root.",
+            ))
+        else:
+            try:
+                import yaml
+                with open(compose_path, "r", encoding="utf-8") as f:
+                    compose_data = yaml.safe_load(f) or {}
 
-            if postgres_loopback and backend_loopback and not public_postgres:
-                self.checks.append(PreflightCheck(
-                    id="D1_COMPOSE_PORT_ISOLATION",
-                    category="Network & HTTPS Prerequisites",
-                    title="Database & Backend Loopback Port Isolation",
-                    status=CheckStatus.PASS,
-                    is_mandatory=True,
-                    evidence="PostgreSQL (5432) and Backend (8000) are strictly bound to loopback 127.0.0.1; zero public exposure.",
-                ))
-            else:
-                self.checks.append(PreflightCheck(
-                    id="D1_COMPOSE_PORT_ISOLATION",
-                    category="Network & HTTPS Prerequisites",
-                    title="Database & Backend Loopback Port Isolation",
-                    status=CheckStatus.FAIL,
-                    is_mandatory=True,
-                    evidence=f"Port exposure unsafe: postgres_loopback={postgres_loopback}, backend_loopback={backend_loopback}, public_postgres={public_postgres}",
-                    remediation="Bind database and backend ports to 127.0.0.1 in docker-compose.yml.",
-                ))
+                services = compose_data.get("services", {})
+                pg_ports = services.get("postgres", {}).get("ports", [])
+                be_ports = services.get("backend", {}).get("ports", [])
+
+                def is_loopback_bound(port_def: Any) -> bool:
+                    p_str = str(port_def).strip()
+                    # Must be explicitly bound to 127.0.0.1 or localhost, not 0.0.0.0 or unbounded host port
+                    return p_str.startswith("127.0.0.1:") or p_str.startswith("localhost:")
+
+                postgres_isolated = all(is_loopback_bound(p) for p in pg_ports) if pg_ports else True
+                backend_isolated = all(is_loopback_bound(p) for p in be_ports) if be_ports else True
+                has_ports = bool(pg_ports and be_ports)
+
+                if postgres_isolated and backend_isolated and has_ports:
+                    self.checks.append(PreflightCheck(
+                        id="D1_COMPOSE_PORT_ISOLATION",
+                        category="Network & HTTPS Prerequisites",
+                        title="Database & Backend Loopback Port Isolation",
+                        status=CheckStatus.PASS,
+                        is_mandatory=True,
+                        evidence=f"Structured YAML port audit: postgres ports ({pg_ports}) and backend ports ({be_ports}) are strictly bound to 127.0.0.1 loopback.",
+                    ))
+                else:
+                    self.checks.append(PreflightCheck(
+                        id="D1_COMPOSE_PORT_ISOLATION",
+                        category="Network & HTTPS Prerequisites",
+                        title="Database & Backend Loopback Port Isolation",
+                        status=CheckStatus.FAIL,
+                        is_mandatory=True,
+                        evidence=f"Structured YAML port audit failed: postgres_isolated={postgres_isolated} ({pg_ports}), backend_isolated={backend_isolated} ({be_ports})",
+                        remediation="Explicitly bind database and backend ports to 127.0.0.1 (e.g. '127.0.0.1:5432:5432') in docker-compose.yml.",
+                    ))
+            except Exception as e:
+                # Fallback to regex pattern matching if PyYAML fails
+                compose_text = compose_path.read_text(encoding="utf-8")
+                postgres_loopback = bool(re.search(r'["\']127\.0\.0\.1:5432:5432["\']', compose_text))
+                backend_loopback = bool(re.search(r'["\']127\.0\.0\.1:8000:8000["\']', compose_text))
+                public_postgres = bool(re.search(r'["\']0\.0\.0\.0:5432["\']|["\']5432:5432["\']', compose_text))
+
+                if postgres_loopback and backend_loopback and not public_postgres:
+                    self.checks.append(PreflightCheck(
+                        id="D1_COMPOSE_PORT_ISOLATION",
+                        category="Network & HTTPS Prerequisites",
+                        title="Database & Backend Loopback Port Isolation",
+                        status=CheckStatus.PASS,
+                        is_mandatory=True,
+                        evidence="PostgreSQL (5432) and Backend (8000) are strictly bound to loopback 127.0.0.1; zero public exposure.",
+                    ))
+                else:
+                    self.checks.append(PreflightCheck(
+                        id="D1_COMPOSE_PORT_ISOLATION",
+                        category="Network & HTTPS Prerequisites",
+                        title="Database & Backend Loopback Port Isolation",
+                        status=CheckStatus.FAIL,
+                        is_mandatory=True,
+                        evidence=f"Port exposure unsafe: postgres_loopback={postgres_loopback}, backend_loopback={backend_loopback}, public_postgres={public_postgres} ({e})",
+                        remediation="Bind database and backend ports to 127.0.0.1 in docker-compose.yml.",
+                    ))
 
         # D2: Upstream TLS reverse proxy requirement documented
         runbook_file = self.repo_root / "docs" / "OPERATIONS_RUNBOOK.md"
@@ -794,7 +911,7 @@ class StagingPreflightRunner:
                     id="D2_UPSTREAM_TLS_DOCUMENTED",
                     category="Network & HTTPS Prerequisites",
                     title="Upstream TLS Termination Contract Documentation",
-                    status=CheckStatus.WARNING,
+                    status=CheckStatus.FAIL,
                     is_mandatory=True,
                     evidence="Runbook does not prominently mandate upstream TLS termination.",
                     remediation="Document mandatory TLS 443 reverse proxy in docs/OPERATIONS_RUNBOOK.md.",
@@ -803,15 +920,16 @@ class StagingPreflightRunner:
 
         # D3: Live external TLS certificate & HTTPS endpoint probe
         if self.staging_url:
-            if not self.staging_url.startswith("https://"):
+            parsed = urllib.parse.urlparse(self.staging_url)
+            if parsed.scheme != "https" or not parsed.netloc:
                 self.checks.append(PreflightCheck(
                     id="D3_LIVE_EXTERNAL_TLS_VERIFIED",
                     category="Network & HTTPS Prerequisites",
                     title="Live Staging HTTPS Endpoint & Certificate Probe",
                     status=CheckStatus.FAIL,
                     is_mandatory=True,
-                    evidence=f"Staging URL '{self.staging_url}' does not use HTTPS scheme.",
-                    remediation="Staging URL must use https:// scheme with valid SSL certificate.",
+                    evidence=f"Staging URL '{self.staging_url}' is invalid or does not use HTTPS scheme (scheme='{parsed.scheme}', host='{parsed.netloc}').",
+                    remediation="Staging URL must be a valid https:// URL with a hostname and valid SSL certificate.",
                     risk_id="OPS-95-01",
                 ))
             else:
@@ -826,7 +944,7 @@ class StagingPreflightRunner:
                             title="Live Staging HTTPS Endpoint & Certificate Probe",
                             status=CheckStatus.PASS,
                             is_mandatory=True,
-                            evidence=f"Successfully probed live staging HTTPS endpoint '{self.staging_url}' (HTTP {status_code}) with valid TLS.",
+                            evidence=f"Successfully probed live staging HTTPS endpoint '{self.staging_url}' (HTTP {status_code}) with valid TLS certificate.",
                             risk_id="OPS-95-01",
                         ))
                     else:
@@ -834,12 +952,37 @@ class StagingPreflightRunner:
                             id="D3_LIVE_EXTERNAL_TLS_VERIFIED",
                             category="Network & HTTPS Prerequisites",
                             title="Live Staging HTTPS Endpoint & Certificate Probe",
-                            status=CheckStatus.WARNING,
+                            status=CheckStatus.FAIL,
                             is_mandatory=True,
-                            evidence=f"Probed '{self.staging_url}', returned HTTP {status_code}.",
+                            evidence=f"Probed '{self.staging_url}', returned unexpected HTTP status {status_code}.",
+                            remediation="Ensure staging server is healthy and responding with HTTP 200 or authorized redirect.",
                             risk_id="OPS-95-01",
                         ))
-                except urllib.error.URLError as e:
+                except urllib.error.HTTPError as e:
+                    # In staging environments, endpoints might be behind HTTP basic auth (401/403)
+                    # Even so, HTTPError proves that the TLS handshake succeeded and the certificate is valid!
+                    if e.code in (401, 403):
+                        self.checks.append(PreflightCheck(
+                            id="D3_LIVE_EXTERNAL_TLS_VERIFIED",
+                            category="Network & HTTPS Prerequisites",
+                            title="Live Staging HTTPS Endpoint & Certificate Probe",
+                            status=CheckStatus.PASS,
+                            is_mandatory=True,
+                            evidence=f"TLS certificate verified on '{self.staging_url}'; staging endpoint responded with HTTP {e.code} (access protected).",
+                            risk_id="OPS-95-01",
+                        ))
+                    else:
+                        self.checks.append(PreflightCheck(
+                            id="D3_LIVE_EXTERNAL_TLS_VERIFIED",
+                            category="Network & HTTPS Prerequisites",
+                            title="Live Staging HTTPS Endpoint & Certificate Probe",
+                            status=CheckStatus.FAIL,
+                            is_mandatory=True,
+                            evidence=f"Endpoint probe returned HTTP {e.code} error for '{self.staging_url}': {e.reason}",
+                            remediation="Verify staging service health and upstream reverse proxy configuration.",
+                            risk_id="OPS-95-01",
+                        ))
+                except (urllib.error.URLError, socket.timeout, TimeoutError) as e:
                     self.checks.append(PreflightCheck(
                         id="D3_LIVE_EXTERNAL_TLS_VERIFIED",
                         category="Network & HTTPS Prerequisites",
@@ -848,6 +991,17 @@ class StagingPreflightRunner:
                         is_mandatory=True,
                         evidence=f"TLS/HTTPS probe failed for '{self.staging_url}': {e}",
                         remediation="Verify DNS routing, edge proxy configuration, and SSL certificate validity.",
+                        risk_id="OPS-95-01",
+                    ))
+                except Exception as e:
+                    self.checks.append(PreflightCheck(
+                        id="D3_LIVE_EXTERNAL_TLS_VERIFIED",
+                        category="Network & HTTPS Prerequisites",
+                        title="Live Staging HTTPS Endpoint & Certificate Probe",
+                        status=CheckStatus.FAIL,
+                        is_mandatory=True,
+                        evidence=f"Unexpected error probing '{self.staging_url}': {e}",
+                        remediation="Verify staging URL accessibility and network connectivity.",
                         risk_id="OPS-95-01",
                     ))
         else:
@@ -904,15 +1058,27 @@ class StagingPreflightRunner:
     # Category E: Operational Safeguards (Preserving Risk IDs)
     # -------------------------------------------------------------------------
     def _check_category_e_operational_safeguards(self) -> None:
-        # E1: Edge TLS Reverse Proxy (OPS-95-01)
-        if self.staging_url and self.staging_url.startswith("https://"):
+        # E1: Edge TLS Reverse Proxy (OPS-95-01) - synchronized with D3 probe
+        d3_check = next((c for c in self.checks if c.id == "D3_LIVE_EXTERNAL_TLS_VERIFIED"), None)
+        if d3_check and d3_check.status == CheckStatus.PASS:
             self.checks.append(PreflightCheck(
                 id="E1_RISK_OPS_95_01_EDGE_TLS",
                 category="Operational Safeguards",
                 title="OPS-95-01: Upstream Reverse Proxy TLS Termination",
                 status=CheckStatus.PASS,
                 is_mandatory=False,
-                evidence=f"Live HTTPS endpoint '{self.staging_url}' verifies TLS termination at edge proxy.",
+                evidence=f"Live HTTPS endpoint '{self.staging_url}' probe passed; verified TLS termination at edge proxy.",
+                risk_id="OPS-95-01",
+            ))
+        elif d3_check and d3_check.status == CheckStatus.FAIL:
+            self.checks.append(PreflightCheck(
+                id="E1_RISK_OPS_95_01_EDGE_TLS",
+                category="Operational Safeguards",
+                title="OPS-95-01: Upstream Reverse Proxy TLS Termination",
+                status=CheckStatus.FAIL,
+                is_mandatory=False,
+                evidence=f"Upstream reverse proxy probe failed for '{self.staging_url}': {d3_check.evidence}",
+                remediation="Ensure upstream reverse proxy is online and serving a valid TLS certificate.",
                 risk_id="OPS-95-01",
             ))
         else:
@@ -1045,6 +1211,7 @@ def main() -> int:
     parser.add_argument("--live-db-verified", action="store_true", help="Assert that live DB backup/restore drill was verified")
     parser.add_argument("--env", type=str, default="staging", help="Target environment name (default: staging)")
     parser.add_argument("--json", action="store_true", help="Output report in JSON format")
+    parser.add_argument("--strict", action="store_true", help="Escalate advisory warnings to blocking failures")
 
     args = parser.parse_args()
 
@@ -1054,6 +1221,7 @@ def main() -> int:
         staging_url=args.staging_url,
         live_db_verified=args.live_db_verified,
         target_env=args.env,
+        strict=args.strict,
     )
     report = runner.run_all()
 
