@@ -5,7 +5,7 @@
 **Working Directory:** `d:\Quants\Projects\quant-portfolio-engine-starter`  
 **Branch:** `main`  
 **Verified Baseline Commit:** `9bc916a` — `docs(session-86): record CI Node.js compatibility remediation and release candidate re-verification`  
-**Remediation Commit:** Pending Session 87 commit  
+**Remediation Commit:** [`0424704`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/commit/0424704) — `feat(deploy): reconcile frontend Dockerfile to Node 24 alpine and document Session 87 staging audit`
 **Current Application Version:** `0.7.0` (strictly preserved across all manifests and runtime configurations)  
 **Session Verdict:** **BLOCKED (Docker Staging Runtime)** / **PASS (Configuration Audit & Continuous Integration)**
 
@@ -182,14 +182,24 @@ docker compose ps
 ## 6. Phase D — Continuous Integration & Regression Audit
 
 ### 6.1 GitHub Actions Telemetry
-- **Audited Commit:** `9bc916a2f3db7080fd65fabe99473c9a2b90d3e6`
-- **Workflow Run ID:** [`40036662888`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/actions/runs/40036662888)
-- **Status:** `completed`
-- **Conclusion:** `success`
-- **Job Results:**
-  - `Frontend Build, Lint & Test (Node 24)`: Completed in 33s (Success)
-  - `PostgreSQL Integration & Migration (PostgreSQL 16)`: Completed in 56s (Success)
-  - `Backend Test Suite (Python 3.11)`: Completed in 1m 27s (Success)
+- **Baseline Commit Run:**
+  - **Commit SHA:** `9bc916a2f3db7080fd65fabe99473c9a2b90d3e6`
+  - **Workflow Run ID:** [`40036662888`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/actions/runs/40036662888)
+  - **Status:** `completed`
+  - **Conclusion:** `success`
+  - **Job Results:**
+    - `Frontend Build, Lint & Test (Node 24)`: Completed in 33s (Success)
+    - `PostgreSQL Integration & Migration (PostgreSQL 16)`: Completed in 56s (Success)
+    - `Backend Test Suite (Python 3.11)`: Completed in 1m 27s (Success)
+- **Session 87 Node 24 Alpine Builder Reconciliation Run:**
+  - **Commit SHA:** `0424704ceea2dbdcfd9f69201f8d95e7912da05d`
+  - **Workflow Run ID:** [`40108854677`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/actions/runs/40108854677)
+  - **Status:** `completed`
+  - **Conclusion:** `success`
+  - **Job Results:**
+    - `Frontend Build, Lint & Test (Node 24)`: Completed in 34s (Success)
+    - `PostgreSQL Integration & Migration (PostgreSQL 16)`: Completed in 43s (Success)
+    - `Backend Test Suite (Python 3.11)`: Completed in 1m 32s (Success)
 
 ### 6.2 Local Regression Testing Summary
 Executed on development workstation against commit `9bc916a`:
