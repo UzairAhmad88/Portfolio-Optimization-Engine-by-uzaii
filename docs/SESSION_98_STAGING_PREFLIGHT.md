@@ -7,6 +7,7 @@
 - **Application Version:** `1.0.0`
 - **Target Branch:** `main`
 - **Baseline Commit:** `5787ced712f66983511185cb61290216afee76ea`
+- **Final Target Commit:** `fd95cf82bf2b542ea407c9b8893ca6be09172422`
 - **Session Focus:** Executable Staging Preflight Harness, Fail-Closed Operational Gates & Deployment Safety Governance
 - **Final Verdict:** `PREFLIGHT IMPLEMENTED — STAGING INFRASTRUCTURE STILL REQUIRED`
 
@@ -170,6 +171,20 @@ The preflight harness is built under strict DevSecOps secret hygiene constraints
 | **Combined Backend Subtotal** | **All preflight & hardening suites** | **81** | **81** | **0** | **0** | **4.07s** |
 | `frontend` Vitest Suite | Client UI, presentation, diagnostics, API client | 88 | **88** | 0 | 0 | 23.92s |
 | `frontend` Production Build | TypeScript compiler (`tsc -b`) & Vite bundler | — | **Success** | 0 | 0 | 1.05s |
+
+### GitHub Actions CI Workflow Telemetry (Commit `fd95cf8`)
+
+- **Workflow Run ID:** [`40133327862`](https://github.com/UzairAhmad88/Portfolio-Optimization-Engine-by-uzaii/actions/runs/40133327862)
+- **Workflow Name:** `CI` (`.github/workflows/ci.yml`)
+- **Target Commit SHA:** `fd95cf82bf2b542ea407c9b8893ca6be09172422`
+- **Overall Status:** `completed` | **Overall Conclusion:** **`success`** (100% Green)
+
+| Job Name | Target Runner & Environment | Execution Window (UTC) | Duration | Conclusion |
+|---|---|---|---|---|
+| **Frontend Build, Lint & Test** | `ubuntu-latest` / Node 24 | `21:14:25Z` $\to$ `21:14:47Z` | 22s | **`success`** |
+| **PostgreSQL Integration & Migration** | `ubuntu-latest` / PostgreSQL 16 | `21:14:25Z` $\to$ `21:15:11Z` | 46s | **`success`** |
+| **Backend Test Suite** | `ubuntu-latest` / Python 3.11 | `21:14:25Z` $\to$ `21:15:39Z` | 1m 14s | **`success`** |
+| **Docker Compose Runtime Verification** | `ubuntu-latest` / Docker Engine 27 & Compose v2 | `21:14:25Z` $\to$ `21:16:07Z` | 1m 42s | **`success`** |
 
 ### Live Workstation Preflight Execution Output
 
