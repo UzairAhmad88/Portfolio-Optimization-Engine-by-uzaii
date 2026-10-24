@@ -120,3 +120,235 @@ jobs:
         run: |
           cd frontend
           npm run build
+
+  docker-compose-verification:
+    name: Docker Compose Runtime Verification (Docker / PostgreSQL 16)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify Docker and Compose Availability
+        run: |
+          docker --version
+          docker compose version
+
+      - name: Set up Ephemeral Environment
+        run: |
+          JWT_SECRET=$(openssl rand -hex 32)
+          POSTGRES_PWD=$(openssl rand -hex 16)
+          cat <<EOF > .env
+          APP_ENV=production
+          POSTGRES_USER=quant_ci_user
+          POSTGRES_PASSWORD=${POSTGRES_PWD}
+          POSTGRES_DB=quant_portfolio_ci_db
+          JWT_SECRET_KEY=${JWT_SECRET}
+          CORS_ORIGINS=http://localhost,http://localhost:80,http://127.0.0.1,http://127.0.0.1:80
+          PDF_MAX_CONCURRENT_RENDERS=2
+          RUN_MIGRATIONS=true
+          FRONTEND_PORT=80
+          EOF
+          echo "POSTGRES_PWD=${POSTGRES_PWD}" >> $GITHUB_ENV
+          echo "Ephemeral .env configuration generated."
+
+      - name: Validate Compose Configuration
+        run: |
+          docker compose config --quiet
+          echo "Compose configuration syntax validated successfully."
+
+      - name: Build Container Images
+        run: |
+          docker compose build
+
+      - name: Start Compose Stack
+        run: |
+          docker compose up -d
+
+      - name: Wait for Services to Become Healthy
+        run: |
+          echo "Waiting for all container services to achieve healthy status..."
+          timeout=90
+          elapsed=0
+          until [ "$elapsed" -ge "$timeout" ]; do
+            postgres_health=$(docker inspect --format='{{json .State.Health.Status}}' quant_portfolio_postgres 2>/dev/null || echo '"unknown"')
+            backend_health=$(docker inspect --format='{{json .State.Health.Status}}' quant_portfolio_backend 2>/dev/null || echo '"unknown"')
+            frontend_health=$(docker inspect --format='{{json .State.Health.Status}}' quant_portfolio_frontend 2>/dev/null || echo '"unknown"')
+
+            echo "Elapsed: ${elapsed}s | postgres: ${postgres_health} | backend: ${backend_health} | frontend: ${frontend_health}"
+
+            if [ "$postgres_health" = '"healthy"' ] && [ "$backend_health" = '"healthy"' ] && [ "$frontend_health" = '"healthy"' ]; then
+              echo "All services are healthy!"
+              break
+            fi
+            sleep 3
+            elapsed=$((elapsed + 3))
+          done
+
+          if [ "$elapsed" -ge "$timeout" ]; then
+            echo "ERROR: Timed out waiting for services to become healthy."
+            docker compose ps
+            exit 1
+          fi
+
+      - name: Verify PostgreSQL Schema & Migration Head
+        run: |
+          echo "Checking Alembic migration head in containerized PostgreSQL..."
+          version=$(docker compose exec -T -e PGPASSWORD="${POSTGRES_PWD}" postgres psql -U quant_ci_user -d quant_portfolio_ci_db -t -c "SELECT version_num FROM alembic_version;" | xargs)
+          echo "Observed Alembic migration version: '${version}'"
+          if [ "$version" != "e5f6a7b8c9d0" ]; then
+            echo "ERROR: Expected migration head 'e5f6a7b8c9d0', got '${version}'"
+            exit 1
+          fi
+
+      - name: Execute Application Runtime Smoke Tests
+        run: |
+          echo "=== 1. Probing Frontend Nginx Entrypoint ==="
+          frontend_code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1/)
+          echo "Frontend HTTP status: ${frontend_code}"
+          [ "$frontend_code" = "200" ] || { echo "Frontend root check failed: expected 200, got ${frontend_code}"; exit 1; }
+
+          echo "=== 2. Probing Frontend Healthz Endpoint ==="
+          healthz_resp=$(curl -fsS http://127.0.0.1/healthz)
+          echo "Healthz response: ${healthz_resp}"
+          echo "${healthz_resp}" | grep -q "OK" || { echo "Frontend healthz check failed"; exit 1; }
+
+          echo "=== 3. Probing Backend Direct Health (/api/v1/health) ==="
+          backend_direct=$(curl -fsS http://127.0.0.1:8000/api/v1/health)
+          echo "Backend direct health response: ${backend_direct}"
+          echo "${backend_direct}" | grep -q '"status":"ok"' || { echo "Backend direct status check failed"; exit 1; }
+          echo "${backend_direct}" | grep -q '"database":"connected"' || { echo "Backend direct DB check failed"; exit 1; }
+
+          echo "=== 4. Probing Backend Health through Nginx API Reverse Proxy (/api/v1/health) ==="
+          backend_proxied=$(curl -fsS http://127.0.0.1/api/v1/health)
+          echo "Proxied health response: ${backend_proxied}"
+          echo "${backend_proxied}" | grep -q '"status":"ok"' || { echo "Proxied status check failed"; exit 1; }
+          echo "${backend_proxied}" | grep -q '"database":"connected"' || { echo "Proxied DB check failed"; exit 1; }
+
+          echo "=== 5. Verifying Authentication Protection on Private Endpoints ==="
+          auth_me_code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1/api/v1/auth/me)
+          echo "Unauthenticated /api/v1/auth/me HTTP status: ${auth_me_code}"
+          [ "$auth_me_code" = "401" ] || { echo "Auth protection check failed: expected 401, got ${auth_me_code}"; exit 1; }
+
+          echo "=== 6. Registering Test Researcher through Reverse Proxy ==="
+          register_resp=$(curl -fsS -X POST http://127.0.0.1/api/v1/auth/register \
+            -H "Content-Type: application/json" \
+            -d '{"email":"ci_smoke@quantengine.internal","password":"SecurePassword123!","full_name":"CI Smoke Tester"}')
+          echo "Register response received successfully."
+          echo "${register_resp}" | grep -q '"email":"ci_smoke@quantengine.internal"' || { echo "User registration check failed"; exit 1; }
+
+          echo "=== 7. Logging in Test Researcher through Reverse Proxy ==="
+          login_resp=$(curl -fsS -X POST http://127.0.0.1/api/v1/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"email":"ci_smoke@quantengine.internal","password":"SecurePassword123!"}')
+          token=$(echo "${login_resp}" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')
+          [ -n "$token" ] || { echo "Failed to parse access token from login response"; exit 1; }
+          echo "JWT access token successfully issued."
+          echo "CI_SMOKE_TOKEN=${token}" >> $GITHUB_ENV
+
+          echo "=== 8. Accessing Protected Route with Authenticated Token ==="
+          auth_me_resp=$(curl -fsS http://127.0.0.1/api/v1/auth/me \
+            -H "Authorization: Bearer ${token}")
+          echo "Authenticated profile verified: ${auth_me_resp}"
+          echo "${auth_me_resp}" | grep -q '"email":"ci_smoke@quantengine.internal"' || { echo "Profile check failed"; exit 1; }
+
+      - name: Verify Container Headless Chromium & PDF Engine
+        run: |
+          echo "Testing headless Chromium and PDF rendering inside running backend container..."
+          docker compose exec -T backend python - << 'EOF'
+          from app.reports.renderer import render_html_to_pdf, count_pdf_pages, get_chromium_executable
+          import concurrent.futures
+
+          chrome_path = get_chromium_executable()
+          print(f"Chromium binary resolved: {chrome_path}")
+
+          html = """<!DOCTYPE html>
+          <html>
+          <head>
+          <meta charset="utf-8">
+          <style>
+            @page { size: A4 portrait; margin: 15mm; }
+            body { font-family: "DejaVu Sans", "FreeSans", sans-serif; color: #111; }
+            h1 { color: #0284c7; }
+            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f8fafc; }
+          </style>
+          </head>
+          <body>
+            <h1>Institutional PDF Rendering Verification</h1>
+            <p>Engine: Headless Chromium via CSS Paged Media in Docker Container</p>
+            <table>
+              <tr><th>Metric</th><th>Gross Value</th><th>Net Value</th></tr>
+              <tr><td>Annualized Return</td><td>18.4%</td><td>16.8%</td></tr>
+              <tr><td>Sharpe Ratio</td><td>1.85</td><td>1.68</td></tr>
+              <tr><td>Max Drawdown</td><td>-8.2%</td><td>-8.9%</td></tr>
+            </table>
+          </body>
+          </html>"""
+
+          pdf = render_html_to_pdf(html)
+          assert pdf.startswith(b"%PDF-"), "Missing %PDF- magic signature"
+          assert len(pdf) > 1000, f"PDF unexpectedly small: {len(pdf)} bytes"
+          page_count = count_pdf_pages(pdf)
+          assert page_count == 1, f"Expected 1 page, got {page_count}"
+          print(f"In-container PDF generation verified: {len(pdf)} bytes, {page_count} page.")
+
+          # Verify concurrency semaphore under load (2 concurrent renders)
+          def render_worker(i):
+              h = f"<html><body><h1>Worker {i}</h1></body></html>"
+              res = render_html_to_pdf(h)
+              assert res.startswith(b"%PDF-")
+              return len(res)
+
+          with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+              futures = [executor.submit(render_worker, i) for i in range(2)]
+              results = [f.result(timeout=30) for f in futures]
+
+          print(f"Concurrent in-container PDF renders succeeded: {results}")
+          EOF
+
+      - name: Verify Database Persistence across Controlled Restart
+        run: |
+          echo "Restarting PostgreSQL container to test volume persistence..."
+          docker compose restart postgres
+
+          echo "Waiting for postgres to become healthy again..."
+          timeout=30
+          elapsed=0
+          until [ "$elapsed" -ge "$timeout" ]; do
+            status=$(docker inspect --format='{{json .State.Health.Status}}' quant_portfolio_postgres 2>/dev/null || echo '"unknown"')
+            if [ "$status" = '"healthy"' ]; then
+              echo "PostgreSQL is healthy after restart."
+              break
+            fi
+            sleep 2
+            elapsed=$((elapsed + 2))
+          done
+
+          # Re-verify migration table persistence
+          version=$(docker compose exec -T -e PGPASSWORD="${POSTGRES_PWD}" postgres psql -U quant_ci_user -d quant_portfolio_ci_db -t -c "SELECT version_num FROM alembic_version;" | xargs)
+          echo "Alembic migration version after restart: '${version}'"
+          [ "$version" = "e5f6a7b8c9d0" ] || { echo "Persistence check failed"; exit 1; }
+
+          # Re-verify backend reconnection
+          backend_check=$(curl -fsS http://127.0.0.1:8000/api/v1/health)
+          echo "${backend_check}" | grep -q '"database":"connected"' || { echo "Backend reconnection check failed"; exit 1; }
+
+          # Re-verify user record persisted across restart
+          user_check=$(curl -fsS http://127.0.0.1/api/v1/auth/me -H "Authorization: Bearer ${CI_SMOKE_TOKEN}")
+          echo "${user_check}" | grep -q '"email":"ci_smoke@quantengine.internal"' || { echo "User record persistence check failed"; exit 1; }
+          echo "Database persistence across container restart verified successfully."
+
+      - name: Dump Container Logs on Failure
+        if: failure()
+        run: |
+          echo "=== DUMPING COMPOSE LOGS DUE TO FAILURE ==="
+          docker compose logs --tail=100
+          docker compose ps
+
+      - name: Teardown and Cleanup
+        if: always()
+        run: |
+          echo "Cleaning up Docker Compose stack and test volumes..."
+          docker compose down -v --remove-orphans || true
+          rm -f .env
