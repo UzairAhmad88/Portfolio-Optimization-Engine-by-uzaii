@@ -292,7 +292,14 @@ def test_mandatory_failed_check_prevents_ready_verdict(repo_root: Path):
 # -----------------------------------------------------------------------------
 def test_blocked_external_check_cannot_be_misreported_as_verified(repo_root: Path):
     # Without live staging URL or live db verification
-    with patch("shutil.which", return_value="/usr/bin/docker"):
+    with patch("shutil.which", return_value="/usr/bin/docker"), \
+         patch("subprocess.run") as mock_subproc:
+        mock_res = MagicMock()
+        mock_res.returncode = 0
+        mock_res.stdout = ""
+        mock_res.stderr = ""
+        mock_subproc.return_value = mock_res
+
         runner = StagingPreflightRunner(
             repo_root=repo_root,
             staging_url=None,
