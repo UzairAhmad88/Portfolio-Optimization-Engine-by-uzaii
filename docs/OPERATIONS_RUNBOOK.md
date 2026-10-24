@@ -25,7 +25,7 @@ This runbook provides actionable, step-by-step procedures for administering, dep
 | Dependency | Minimum Version | Recommended Version | Scope of Usage |
 |---|---|---|---|
 | **Python** | 3.11.0 | 3.11.9+ | Backend API, quant calculation engines, and migrations |
-| **Node.js** | 20.0.0 LTS | 20.18.0+ | Frontend build, dev server, Vitest, and linter |
+| **Node.js** | 22.0.0 LTS | 24.0.0+ | Frontend build, dev server, Vitest, and linter (Node 22+ required by jsdom 30) |
 | **npm** | 10.0.0 | 10.8.0+ | Frontend package and lockfile management |
 | **Docker Engine** | 20.10.0 | 26.0.0+ | Multi-container self-hosted deployment (*optional for local dev*) |
 | **Docker Compose** | 2.0.0 | 2.27.0+ | Service orchestration plugin (`docker compose`) |
@@ -280,6 +280,7 @@ If any setting is invalid, the validator raises an informative `RuntimeError` id
 
 - **Docker Compose:** Place `POSTGRES_PASSWORD=<strong_pwd>` and `JWT_SECRET_KEY=<strong_key>` in the root `.env` file. Ensure `.env` is listed in `.gitignore` and has strict file permissions (`chmod 600 .env`).
 - **Compose Interpolation Guard:** `docker-compose.yml` enforces `${POSTGRES_PASSWORD:?ERROR: POSTGRES_PASSWORD must be explicitly provided in environment or .env file}`, preventing silent fallback to default passwords.
+- **HTTPS Cookie Security (`COOKIE_SECURE`):** In staging and production environments accessed over HTTPS, set `COOKIE_SECURE=true` in `.env`. This ensures that authentication cookies carry the `Secure` flag, preventing browser transmission over unencrypted connections.
 - **Systemd / Cloud Orchestrators:** Inject via environment variables or secret vaults (e.g., AWS Secrets Manager, GCP Secret Manager, HashiCorp Vault, Kubernetes Secrets).
 - **CRITICAL WARNING:** NEVER commit `.env`, YAML configurations containing real credentials, or backup archives to Git. Never pass passwords on command lines visible in process tables (`ps aux`).
 
@@ -427,30 +428,31 @@ head -c 5 test_report.pdf
 
 ### 1. Workflow Architecture (`.github/workflows/ci.yml`)
 
-The CI workflow triggers on pushes to `main` and pull requests targeting `main`. It contains three independent jobs:
+The CI workflow triggers on pushes to `main` and pull requests targeting `main`. It executes four automated jobs:
 
 ```
-                  ┌─────────────────────────────────────────┐
-                  │          GitHub Actions Workflow        │
-                  └────────────────────┬────────────────────┘
-                                       │
-        ┌──────────────────────────────┼──────────────────────────────┐
-        ▼                              ▼                              ▼
-┌──────────────────────┐    ┌──────────────────────┐    ┌──────────────────────┐
-│    backend-tests     │    │ postgres-integration │    │frontend-build-and-test│
-│ • Python 3.11        │    │ • PostgreSQL 16      │    │ • Node.js 20         │
-│ • Full pytest suite  │    │   Service Container  │    │ • npm ci             │
-│ • SQLite in-memory   │    │ • alembic upgrade    │    │ • oxlint             │
-│ • 663+ tests         │    │ • Postgres tests     │    │ • vitest (88 tests)  │
-└──────────────────────┘    └──────────────────────┘    │ • vite build (prod)  │
-                                                        └──────────────────────┘
+                                  ┌─────────────────────────────────────────┐
+                                  │          GitHub Actions Workflow        │
+                                  └────────────────────┬────────────────────┘
+                                                       │
+         ┌─────────────────────────┬───────────────────┴───────────────────┬─────────────────────────┐
+         ▼                         ▼                                       ▼                         ▼
+┌──────────────────┐    ┌──────────────────────┐              ┌─────────────────────────┐  ┌─────────────────────────┐
+│  backend-tests   │    │ postgres-integration │              │ frontend-build-and-test │  │docker-compose-verify   │
+│ • Python 3.11    │    │ • PostgreSQL 16      │              │ • Node.js 24            │  │ • Ubuntu 24.04 runner   │
+│ • Pytest suite   │    │   Service Container  │              │ • npm ci                │  │ • Full 3-tier stack up  │
+│ • 700+ tests     │    │ • alembic upgrade    │              │ • oxlint                │  │ • Health & Auth probes  │
+│ • SQLite memory  │    │ • Postgres tests     │              │ • vitest (88 tests)     │  │ • In-container PDF test │
+└──────────────────┘    └──────────────────────┘              │ • vite build (prod)     │  │ • Restart persistence   │
+                                                              └─────────────────────────┘  └─────────────────────────┘
 ```
 
 ### 2. Understanding Verification Distinctions
 
 - **Locally Passing:** Tests executed on the developer workstation (e.g., SQLite suite, frontend tests).
 - **Service Container Tests:** PostgreSQL integration tests require a running PostgreSQL instance; they skip cleanly locally if PostgreSQL is unavailable and execute inside the GitHub Actions `postgres:16-alpine` service container.
-- **Workflow Passing:** Confirmed only when GitHub Actions has executed all three jobs and reported green status on the commit.
+- **Docker Compose Verification:** Live multi-container verification executing on Ubuntu CI runners with Docker Engine (`docker compose up -d`), verifying container health, routing, authentication, Chromium PDF rendering, and database persistence.
+- **Workflow Passing:** Confirmed only when GitHub Actions has executed all four jobs and reported green status on the commit.
 
 ### 3. Diagnosing CI Job Failures
 
