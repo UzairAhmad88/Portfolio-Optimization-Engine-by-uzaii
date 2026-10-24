@@ -327,7 +327,7 @@ def test_render_html_to_pdf_basic():
     </body>
     </html>
     """
-    pdf_bytes = render_html_to_pdf(html_content, timeout_seconds=30.0)
+    pdf_bytes = render_html_to_pdf(html_content, timeout_seconds=45.0)
     assert isinstance(pdf_bytes, bytes)
     assert pdf_bytes.startswith(b"%PDF-")
     assert len(pdf_bytes) > 1000

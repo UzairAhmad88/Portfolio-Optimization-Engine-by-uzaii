@@ -62,11 +62,14 @@ Session 96 remediates the highest-priority operational security risk identified 
 - Added preflight execution of `validate_production_configuration()` before probing database connectivity or executing `alembic upgrade head`, ensuring container fail-closed behavior.
 
 ### 3.5 `docker-compose.yml`
-- Replaced `${POSTGRES_PASSWORD:-quant_password}` with `${POSTGRES_PASSWORD:?ERROR: POSTGRES_PASSWORD must be explicitly provided in environment or .env file}` in `postgres` service.
-- Replaced fallback password in `backend` service `DATABASE_URL` interpolation with explicit parameter expansion `${POSTGRES_PASSWORD:?ERROR: ...}`.
+- Replaced `${POSTGRES_PASSWORD:-quant_password}` with `"${POSTGRES_PASSWORD:?ERROR: POSTGRES_PASSWORD must be explicitly provided in environment or .env file}"` in `postgres` service (quoted to ensure strict YAML mapping compliance).
+- Replaced fallback password in `backend` service `DATABASE_URL` interpolation with explicit parameter expansion `"${POSTGRES_PASSWORD:?ERROR: ...}"`.
 
 ### 3.6 `.env.example` & `backend/.env.example`
 - Added clear documentation warnings regarding mandatory production passwords and explicit instructions for local development.
+
+### 3.7 `backend/tests/test_pdf_renderer.py`
+- Aligned `test_render_html_to_pdf_basic` timeout from 30.0s to 45.0s to eliminate transient cold-start timeouts on shared GitHub Actions runners under high concurrency.
 
 ---
 
